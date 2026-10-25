@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a problem with epub-tts.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app.
+        2. Pick an EPUB.
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS
+      placeholder: iPhone 15, iOS 18.7
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser or installed home-screen app
+      placeholder: Safari tab, or the app on the home screen
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Copy it from the footer of the app, or from the first line of the Diagnostics log.
+      placeholder: epub-tts v1.0.0-rc.0 (abc1234)
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Diagnostics log
+      description: Open Diagnostics in the app. Press "Copy log". Paste the text here.
+      render: text
+    validations:
+      required: false

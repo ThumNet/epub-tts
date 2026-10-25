@@ -1,5 +1,6 @@
 const POSITION_KEY = "epub-tts:position";
 const GENERATION_KEY = "epub-tts:generation";
+const SETTINGS_KEY = "epub-tts:settings";
 
 export interface SavedPosition {
   /** File name and size identify the book. */
@@ -11,6 +12,32 @@ export interface SavedPosition {
   sentenceIndex: number;
   seconds: number;
   savedAt: number;
+}
+
+export interface Settings {
+  voiceId: string;
+  speed: number;
+}
+
+export function saveSettings(settings: Settings): void {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** Returns the saved settings, or undefined when nothing valid is saved. The caller checks the voice. */
+export function loadSettings(): Settings | undefined {
+  const raw = localStorage.getItem(SETTINGS_KEY);
+  if (!raw) return undefined;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value)) return undefined;
+    const { voiceId, speed } = value;
+    if (typeof voiceId === "string" && typeof speed === "number" && Number.isFinite(speed)) {
+      return { voiceId, speed };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 export interface GenerationMarker {

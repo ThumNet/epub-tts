@@ -1,6 +1,25 @@
-# EPUB TTS
+# epub-tts
 
 A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It runs on a phone and on a desktop. It has no backend.
+
+## For testers
+
+1. Open https://thumnet.github.io/epub-tts/ on your phone.
+2. Optional on iPhone: add the app to the home screen. Open the page in Safari, tap Share, then tap "Add to Home Screen".
+3. Pick an EPUB file. Pick a chapter. Press "Generate chapter audio". Playback starts after the first segment.
+4. Pick a voice in the "Voice" list. The default is Kristin. The page shows whether the voice is downloaded. Use "Download" to fetch it ahead of time (about 61 MB) or "Remove" to free the space. If the library cannot remove the files (Safari lacks the call it uses), the app deletes them directly. The page shows an error if the voice stays stored. The first generation downloads the voice by itself if needed.
+5. Use the "Speed" slider (0.75x to 2x) to change the playback speed. "Reset to 1x" returns to normal speed. The app remembers your voice and speed.
+6. The app remembers the last EPUB you opened on this device. After a restart, the app reopens it and shows "restored from this device". Press "Forget this book" to delete it from the device. The saved position and settings stay. The browser may clear site storage. We did not verify this on iOS. Offline use comes in a later phase.
+
+Known limit: on iOS, after a pause of about 3 to 6 seconds, resume from the lock screen stops working. It works again after you bring the app to the foreground. This comes from the owner's own phone log. We did not verify it on other devices.
+
+To report a bug:
+
+1. Open "Diagnostics" at the bottom of the page. Press "Copy log".
+2. Open a new issue in this repository. Choose the "Bug report" template.
+3. Paste the log into the template.
+
+The app version shows in the footer. Licence: see `LICENSE`. Third-party licences and voice credits: see `THIRD_PARTY_NOTICES.md`.
 
 ## How it works
 
@@ -10,10 +29,25 @@ A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It run
 - The generator stays at most 2 ready segments ahead of the playing one (`SEGMENTS_AHEAD`).
 - To cap memory, the app keeps the audio of 3 played segments behind the playing one (`SEGMENTS_BEHIND`). It drops older audio.
 - If you seek to a dropped segment, the app regenerates it on demand.
+- Tap a sentence to play from there. If the sentence is not generated yet, the app restarts generation from that sentence. Playback then starts after a short wait.
 - If playback reaches a segment that is not ready, the app shows "Buffering" and continues when the segment is ready.
-- The app saves the reading position. After a restart, pick the same EPUB and press "Resume saved position". Generation then restarts from the saved sentence.
-- The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward and seek forward.
-- The on-screen log records diagnostics. Press "Copy log" to copy it.
+- The app saves the reading position. After a restart, press "Resume saved position". Generation then restarts from the saved sentence.
+- The app remembers one book. After you open an EPUB, the app stores a copy in the browser (IndexedDB database `epub-tts`, store `book`). Opening another EPUB replaces it. At startup the app reopens it and preselects the saved chapter. Nothing starts by itself. If you pick a file during the reopen, your file wins. If the stored book cannot be parsed, the app forgets it. "Forget this book" deletes the copy. The button is hidden when no book is stored. It is disabled while the app generates or plays. The app does not store generated audio. If the app cannot store the book, it shows a message and the book still works.
+- The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward, seek forward, previous track and next track.
+
+### Chapter navigation and continuous playback
+
+- Use the "Prev" and "Next" buttons beside the chapter list. They go to the nearest chapter with text and start it from the beginning. They skip chapters without text, such as a cover. They also cancel a running generation.
+- "Prev" is disabled on the first chapter with text. "Next" is disabled on the last one.
+- The lock-screen previous track and next track buttons do the same. Support depends on the device and the browser.
+- When the last segment of a chapter ends, playback continues into the next chapter with text. The same audio element plays it, so there is no stop.
+- After a chapter is fully generated, the app generates the first segments of the next chapter in the background. These segments share the 2-segment lookahead limit (`SEGMENTS_AHEAD`) with the playing chapter.
+- If the next chapter is not ready when the current one ends, the app shows "Buffering" and continues when it is ready.
+- Playback stops at the end of the book. Cancel, Prev, Next and a new Generate discard the prefetched chapter.
+- The app saves the position of the new chapter when playback enters it. "Resume saved position" continues there.
+- While a generation runs, picking another chapter in the list works like Prev and Next: the app cancels the generation and starts that chapter. The list always shows the playing chapter. Prev and Next move from the playing chapter.
+- When you pick an EPUB that matches the saved position, the app preselects the saved chapter. It does not start by itself. Press "Resume saved position".
+- The on-screen log records diagnostics. Open "Diagnostics" and press "Copy log" to copy it.
 
 ### Recovery from stuck resume on iOS
 
@@ -45,6 +79,15 @@ Other scripts:
 - `npm run build` checks the types and builds into `dist/`.
 - `npm run preview` serves `dist/` at `http://localhost:4173/epub-tts/`.
 
+### Development: end-to-end tests
+
+The tests use Playwright on Chromium and Firefox. A mock speech worker replaces Piper, so the tests need no network and no voice download.
+
+1. Run `npm run test:e2e:install` once to install the browsers.
+2. Run `npm run test:e2e`. It builds the e2e bundle (`npm run build:e2e`, into `dist-e2e/`), serves it with `vite preview` and runs the tests in `tests/e2e/`.
+
+The build mode `e2e` sets `VITE_E2E`. The flag has two effects: the app uses `src/worker.mock.ts` (a quiet tone for each sentence) and it accepts `?segmentSeconds=<n>` to shorten the segments. A normal build (`npm run build`) contains neither. The e2e preview server sends COOP/COEP headers, so the page is cross-origin isolated and coi-serviceworker does not run. CI runs the tests in `.github/workflows/ci.yml`. Real audio, the lock screen and real voices stay manual checks on a phone.
+
 The first generation downloads the voice model (about 63 MB). The browser stores it in the origin private file system.
 
 ## Large files
@@ -52,7 +95,7 @@ The first generation downloads the voice model (about 63 MB). The browser stores
 The repository does not contain the large files. No download script is needed.
 
 - The ONNX Runtime WASM files and the Piper phonemizer files (about 18 MB) come from npm. The build copies them from `node_modules` into `dist/ort/` and `dist/piper/`.
-- The voice model comes from Hugging Face at run time. The library hard-codes the URL: `https://huggingface.co/diffusionstudio/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx`.
+- The voice model comes from Hugging Face at run time. The library hard-codes the URL for the voice. For `en_US-lessac-medium` it is `https://huggingface.co/diffusionstudio/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx`. The default voice is now `en_US-kristin-medium`, because Lessac has a research-only licence.
 - `node_modules/` and `dist/` are in `.gitignore`.
 
 ## Deploy to GitHub Pages
@@ -72,7 +115,7 @@ Use any EPUB. The app reads the whole chapter, in segments of about one minute.
 2. Pick the EPUB file. Pick the chapter. Press "Generate chapter audio".
 3. Keep the screen on while the first segment generates. Playback then starts on its own.
 4. Follow the checklist below.
-5. Press "Copy log" after each test. Save the log with the device, browser and result.
+5. Open "Diagnostics" and press "Copy log" after each test. Save the log with the device, browser and result.
 
 Checklist (the full version is in `PLAN.md`):
 
