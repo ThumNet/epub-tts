@@ -1,0 +1,13 @@
+{
+  "name": "EPUB TTS prototype",
+  "short_name": "EPUB TTS",
+  "description": "Reads EPUB chapters aloud with Piper TTS in the browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
