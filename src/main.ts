@@ -7,13 +7,13 @@ import {
   savePosition,
   setGenerationMarker,
 } from "./store";
-import { DEFAULT_VOICE_ID, VOICES, findVoice, removeVoiceFiles } from "./voices";
-import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
+import { DEFAULT_VOICE_ID, VOICES, findVoice } from "./voices";
 import { joinClips } from "./wav";
 import { createWorkerClient, VoiceChangedError } from "./engine/worker-client";
 import type { GeneratedClip } from "./engine/worker-client";
 import { createDiagnostics } from "./engine/diagnostics";
 import { createSettings } from "./engine/settings";
+import { createVoicesStore } from "./engine/voices-store";
 import {
   MAX_RECOVERY_ATTEMPTS,
   METADATA_TIMEOUT_MS,
@@ -32,7 +32,7 @@ import {
 import {
   clampSpeed,
   describePosition,
-  farSegments,
+  errorName,  farSegments,
   hasTextChapter as hasTextChapterIn,
   playingChapterIndex as playingChapterIndexOf,
   segmentForSentence,
@@ -193,14 +193,13 @@ let buffering = false;
 let wantPlaying = false;
 // Playback speed and voice id. The speed is reapplied after every audio.src change.
 const settings = createSettings({ audio });
-// True while a voice download or removal runs.
-let voiceBusy = false;
-// Whether the selected voice is in the browser storage. Undefined when unknown.
-let voiceStored: boolean | undefined;
-let voiceMessage = "";
-// Text of the last failed voice action. Cleared when a new voice action starts or the voice changes.
-let voiceError = "";
-let voiceStatusToken = 0;
+// Voice download, removal and storage status. `generating` is read through a getter.
+const voices = createVoicesStore({
+  hooks,
+  getVoiceId: () => selectedVoiceId(),
+  isGenerating: () => generating,
+  persistSettings: () => settings.persist(),
+});
 // Token of the newest book request (picked file, automatic restore or forget). A result with an older token is dropped.
 let bookToken = 0;
 // True while a book is stored on this device.
@@ -224,7 +223,7 @@ let wakeLock: WakeLockSentinel | undefined;
 const workerClient = createWorkerClient({
   setStatus: (text) => hooks.setStatus(text),
   onReady: () => {
-    void refreshVoiceStatus();
+    void voices.refresh();
   },
 });
 
@@ -304,10 +303,6 @@ function snapshot(label: string): string {
     `${label}: paused=${audio.paused} t=${audio.currentTime.toFixed(2)} s ` +
     `readyState=${audio.readyState} networkState=${audio.networkState}`
   );
-}
-
-function errorName(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 function waitForMetadata(): Promise<void> {
@@ -1147,7 +1142,7 @@ async function runNavigation(
   find: (book: OpenBook) => Promise<TextChapter | undefined>,
 ): Promise<void> {
   const book = openedBook;
-  if (!book || voiceBusy || navigating) {
+  if (!book || voices.busy || navigating) {
     log(`chapter change ignored (${source}): ${book ? "busy" : "no book open"}`);
     showPlayingChapter();
     return;
@@ -1192,7 +1187,7 @@ async function runNavigation(
 async function jumpToSentence(sentenceIndex: number): Promise<void> {
   const book = openedBook;
   const chapter = loaded;
-  if (!book || !chapter || voiceBusy || navigating) {
+  if (!book || !chapter || voices.busy || navigating) {
     log(`jump ignored: sentence ${sentenceIndex + 1} (${book && chapter ? "busy" : "nothing loaded"})`);
     return;
   }
@@ -1312,7 +1307,7 @@ function hasTextChapter(from: number, step: 1 | -1): boolean {
 }
 
 function updateControls(): void {
-  const locked = generating || voiceBusy || bookBusy;
+  const locked = generating || voices.busy || bookBusy;
   generateButton.disabled = locked || !openedBook;
   cancelButton.disabled = !generating;
   const saved = loadPosition();
@@ -1322,17 +1317,17 @@ function updateControls(): void {
   forgetButton.disabled = locked || bookBusy || navigating || !audio.paused;
   fileInput.disabled = bookBusy;
   const base = navigationBase();
-  prevChapterButton.disabled = voiceBusy || bookBusy || navigating || !hasTextChapter(base, -1);
-  nextChapterButton.disabled = voiceBusy || bookBusy || navigating || !hasTextChapter(base, 1);
-  voiceDownloadButton.disabled = locked || voiceStored !== false;
-  voiceRemoveButton.disabled = locked || voiceStored !== true;
-  if (voiceBusy) {
-    voiceStatus.textContent = voiceMessage;
-  } else if (voiceError) {
-    voiceStatus.textContent = voiceError;
-  } else if (voiceStored === undefined) {
+  prevChapterButton.disabled = voices.busy || bookBusy || navigating || !hasTextChapter(base, -1);
+  nextChapterButton.disabled = voices.busy || bookBusy || navigating || !hasTextChapter(base, 1);
+  voiceDownloadButton.disabled = locked || voices.stored !== false;
+  voiceRemoveButton.disabled = locked || voices.stored !== true;
+  if (voices.busy) {
+    voiceStatus.textContent = voices.message;
+  } else if (voices.error) {
+    voiceStatus.textContent = voices.error;
+  } else if (voices.stored === undefined) {
     voiceStatus.textContent = "Status unknown";
-  } else if (voiceStored) {
+  } else if (voices.stored) {
     voiceStatus.textContent = "Downloaded";
   } else {
     const size = findVoice(selectedVoiceId())?.sizeMb ?? 61;
@@ -1340,101 +1335,14 @@ function updateControls(): void {
   }
 }
 
-async function readStoredVoices(): Promise<string[] | undefined> {
-  try {
-    return await stored();
-  } catch (error) {
-    log(`voice storage unavailable: ${errorName(error)}`);
-    return undefined;
-  }
-}
-
-async function refreshVoiceStatus(): Promise<void> {
-  const token = ++voiceStatusToken;
-  const id = selectedVoiceId();
-  const list = await readStoredVoices();
-  if (token !== voiceStatusToken) return;
-  voiceStored = list ? list.includes(id) : undefined;
-  hooks.notifyChange();
-}
-
-/** The library does not wait for its file write, so poll a few times after a download. */
-async function waitUntilStored(id: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const list = await readStoredVoices();
-    if (!list) return false;
-    if (list.includes(id)) return true;
-    await new Promise<void>((resolve) => setTimeout(resolve, 500));
-  }
-  return false;
-}
-
 voiceSelect.addEventListener("change", () => {
   settings.setVoiceId(voiceSelect.value);
-  const id = selectedVoiceId();
-  settings.persist();
-  log(`voice selected: ${id}. The worker switches before the next generation.`);
-  voiceStored = undefined;
-  voiceError = "";
-  void refreshVoiceStatus();
+  voices.select();
 });
 
-voiceDownloadButton.addEventListener("click", () => {
-  if (generating || voiceBusy) return;
-  const id = selectedVoiceId();
-  voiceBusy = true;
-  voiceError = "";
-  voiceMessage = "Downloading 0%";
-  hooks.notifyChange();
-  log(`voice download started: ${id}`);
-  void (async () => {
-    try {
-      await download(id, (progress) => {
-        if (progress.total <= 0) return;
-        voiceMessage = `Downloading ${Math.round((progress.loaded * 100) / progress.total)}%`;
-        hooks.notifyChange();
-      });
-      const ok = await waitUntilStored(id);
-      log(ok ? `voice download finished: ${id}` : `voice download finished but ${id} was not found in storage`);
-    } catch (error) {
-      log(`voice download failed: ${errorName(error)}`);
-    } finally {
-      voiceBusy = false;
-      hooks.notifyChange();
-      await refreshVoiceStatus();
-    }
-  })();
-});
+voiceDownloadButton.addEventListener("click", () => voices.startDownload());
 
-voiceRemoveButton.addEventListener("click", () => {
-  if (generating || voiceBusy) return;
-  const id = selectedVoiceId();
-  voiceBusy = true;
-  voiceError = "";
-  voiceMessage = "Removing...";
-  hooks.notifyChange();
-  log(`voice remove started: ${id}`);
-  void (async () => {
-    try {
-      await remove(id);
-      // The library swallows errors and needs FileSystemHandle.remove() (not in Safari). Check, then delete directly.
-      if ((await readStoredVoices())?.includes(id)) {
-        log(`library remove left ${id} in storage: deleting the files directly`);
-        await removeVoiceFiles(id);
-      }
-      const left = await readStoredVoices();
-      if (left?.includes(id)) throw new Error("the files are still in storage after deletion");
-      log(`voice removed: ${id}`);
-    } catch (error) {
-      voiceError = `Could not remove the voice: ${errorName(error)}`;
-      log(`voice remove failed: ${errorName(error)}`);
-    } finally {
-      voiceBusy = false;
-      hooks.notifyChange();
-      await refreshVoiceStatus();
-    }
-  })();
-});
+voiceRemoveButton.addEventListener("click", () => voices.startRemove());
 
 function initSettings(): void {
   voiceSelect.replaceChildren(...VOICES.map((voice) => new Option(voice.label, voice.id)));
@@ -1448,7 +1356,7 @@ function initSettings(): void {
   settings.persist();
   log(`settings: voice=${voiceId} speed=${settings.speed.toFixed(2)}x`);
   hooks.notifyChange();
-  void refreshVoiceStatus();
+  void voices.refresh();
 }
 initSettings();
 
@@ -1582,7 +1490,7 @@ audio.addEventListener("play", () => hooks.notifyChange());
 audio.addEventListener("pause", () => hooks.notifyChange());
 
 forgetButton.addEventListener("click", () => {
-  if (!bookRemembered || bookBusy || generating || voiceBusy || navigating || !audio.paused) return;
+  if (!bookRemembered || bookBusy || generating || voices.busy || navigating || !audio.paused) return;
   const token = ++bookToken;
   bookBusy = true;
   hooks.notifyChange();
@@ -1641,7 +1549,7 @@ prevChapterButton.addEventListener("click", () => void navigateChapter(-1, "butt
 nextChapterButton.addEventListener("click", () => void navigateChapter(1, "button"));
 
 generateButton.addEventListener("click", () => {
-  if (voiceBusy) return;
+  if (voices.busy) return;
   void generateChapter(hooks.getSelectedChapter());
 });
 
@@ -1649,7 +1557,7 @@ cancelButton.addEventListener("click", () => cancelGeneration());
 
 resumeButton.addEventListener("click", () => {
   const saved = loadPosition();
-  if (!saved || openedBook?.id !== saved.bookId || voiceBusy) return;
+  if (!saved || openedBook?.id !== saved.bookId || voices.busy) return;
   hooks.showChapter(saved.chapterIndex);
   log(`resuming at sentence ${saved.sentenceIndex + 1} with voice ${selectedVoiceId()}: generating from that sentence`);
   void generateChapter(saved.chapterIndex, saved.sentenceIndex);

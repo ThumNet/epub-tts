@@ -165,4 +165,21 @@ Results: `npm run typecheck` OK (`boundaries OK: 17 files, 28 imports, 0 cycles,
 
 Same asset list, no new chunk. The e2e build has `index-cjE_ysxU.js` (408.29 kB).
 
-Line counts: `src/main.ts` 1724 (was 1737), `src/engine/settings.ts` 76.
+Line counts: `src/main.ts` 1724 (was 1737), `src/engine/settings.ts` 79 (an earlier note said 76; the file has 79 lines).
+
+## Step 4c result
+
+Step 4c moves the voice download, remove and status logic into `src/engine/voices-store.ts` (`createVoicesStore({ hooks, getVoiceId, isGenerating, persistSettings })`). It owns `voiceBusy`, `voiceStored`, `voiceMessage`, `voiceError`, `voiceStatusToken`. API: getters `busy`, `stored`, `message`, `error`; `refresh()`, `select()`, `startDownload()`, `startRemove()`. `readStoredVoices` and `waitUntilStored` are private. `errorName` moved to `src/engine/pure.ts`. `main.ts` keeps the DOM listeners and `updateControls()`, which reads the store.
+
+Results: `npm run typecheck` OK (`boundaries OK: 18 files, 33 imports, 0 cycles, 7 engine files checked`), `npm test` 103 passed (8 files, new `voices-store.test.ts`, 13 tests), `npm run test:e2e` 14 passed. `dist` has no `mock` string.
+
+| File in `dist/assets` | Size (vite, kB) | Step 4b |
+|---|---|---|
+| `index-Dh3kQ3B-.js` | 408.54 | 408.11 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-CJXtiIq_.js` (408.72 kB).
+
+Line counts: `src/main.ts` 1632 (was 1724), `src/engine/voices-store.ts` 144.

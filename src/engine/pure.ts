@@ -108,6 +108,10 @@ export function roundSpeed(value: number): number {
   return Math.round(clampSpeed(value) * 100) / 100;
 }
 
+export function errorName(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
 export interface PositionLike {
   bookTitle: string;
   chapterIndex: number;
