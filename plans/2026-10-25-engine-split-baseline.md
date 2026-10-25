@@ -56,3 +56,24 @@ A search of `dist/` for `EPUB_TTS_MOCK_WORKER`, `worker.mock`, `segmentSeconds` 
 | `protocol.ts` | 15 |
 | `env.d.ts` | 9 |
 | `e2e-worker.ts` | 4 |
+
+## Step 1 result
+
+Step 1 moves the constants into `src/engine/config.ts` and the pure helpers into `src/engine/pure.ts`.
+
+- `npm test`: 6 files, 82 tests (baseline: 2 files, 29 tests). New files: `pure.test.ts`, `config.test.ts`, `store.test.ts`, `epub.test.ts`.
+- `npm run typecheck`: `boundaries OK: 13 files, 14 imports, 0 cycles, 2 engine files checked`.
+- `npm run test:e2e`: 14 passed (12.6 s).
+
+| File in `dist/assets` | Bytes | Baseline |
+|---|---|---|
+| `index-CB3e2XBS.js` | 406703 | 406236 |
+| `ort.wasm.min-4XBKGcRb.js` | 141886 | 141886 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88803 | 88803 |
+| `worker-Bf42NmSi.js` | 16109 | 16109 |
+
+The `index` file is 467 bytes larger. The new function call forms and exported helpers add code. The asset list is the same, with no new chunk.
+A search of `dist/` for `segmentSeconds`, `EPUB_TTS_MOCK_WORKER` and `worker.mock` finds no match.
+The `import.meta.env.VITE_E2E` test stays in `main.ts`. If it moved into the engine as a parameter, `segmentSeconds` would ship in production.
+
+Line counts: `src/main.ts` 1959 (was 1989), `src/engine/config.ts` 38, `src/engine/pure.ts` 124.

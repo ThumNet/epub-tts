@@ -11,33 +11,45 @@ import {
   saveSettings,
   setGenerationMarker,
 } from "./store";
-import type { SavedPosition } from "./store";
 import { DEFAULT_VOICE_ID, VOICES, findVoice, removeVoiceFiles } from "./voices";
 import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
 import { joinClips } from "./wav";
 import { createMockWorker } from "./e2e-worker";
+import {
+  HEARTBEAT_MS,
+  INIT_TIMEOUT_MS,
+  MAX_RECOVERY_ATTEMPTS,
+  METADATA_TIMEOUT_MS,
+  PARAGRAPH_GAP_MS,
+  PAUSE_IGNORE_MS,
+  SAVE_INTERVAL_MS,
+  SEEK_STEP_S,
+  SEGMENT_TARGET_S as DEFAULT_SEGMENT_TARGET_S,
+  SEGMENTS_AHEAD,
+  SEGMENTS_BEHIND,
+  SENTENCE_GAP_MS,
+  SNAPSHOT_MS,
+  STUCK_CHECK_MS,
+  segmentTargetSeconds,
+} from "./engine/config";
+import {
+  clampSpeed,
+  describePosition,
+  farSegments,
+  hasTextChapter as hasTextChapterIn,
+  playingChapterIndex as playingChapterIndexOf,
+  roundSpeed,
+  segmentForSentence,
+  segmentsAhead as segmentsAheadOf,
+  sentenceIn,
+} from "./engine/pure";
 import type { Clip, Timing } from "./wav";
 
-const SENTENCE_GAP_MS = 250;
-const PARAGRAPH_GAP_MS = 600;
-const SAVE_INTERVAL_MS = 5000;
-const HEARTBEAT_MS = 10000;
-const SEEK_STEP_S = 15;
 /** Target audio length of one segment. A segment closes once clips and gaps reach this. */
-const SEGMENT_TARGET_S = segmentTargetSeconds();
-
-/** 60 s. End-to-end builds (VITE_E2E) accept `?segmentSeconds=<n>` so tests use short segments. */
-function segmentTargetSeconds(): number {
-  if (import.meta.env.VITE_E2E) {
-    const override = Number(new URLSearchParams(location.search).get("segmentSeconds"));
-    if (Number.isFinite(override) && override > 0) return override;
-  }
-  return 60;
-}
-/** The generator stays at most this many ready segments ahead of the playing one. */
-const SEGMENTS_AHEAD = 2;
-/** Already-played segments kept in memory behind the playing one. Older ones lose their audio. */
-const SEGMENTS_BEHIND = 3;
+// The e2e check stays here so the build-time define removes the override code from production bundles.
+const SEGMENT_TARGET_S = import.meta.env.VITE_E2E
+  ? segmentTargetSeconds(location.search, true)
+  : DEFAULT_SEGMENT_TARGET_S;
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
@@ -166,8 +178,6 @@ let buffering = false;
 let wantPlaying = false;
 // Playback speed. Reapplied after every audio.src change.
 let speed = 1;
-const SPEED_MIN = 0.75;
-const SPEED_MAX = 2;
 // True while a voice download or removal runs.
 let voiceBusy = false;
 // Whether the selected voice is in the browser storage. Undefined when unknown.
@@ -232,8 +242,6 @@ let onWorkerEvent: (event: WorkerEvent) => void = () => {};
 let rejectPending: ((error: Error) => void) | undefined;
 // True while an init request waits for "ready".
 let initPending = false;
-/** Longest wait for a voice init. A model download on a slow phone can take long. */
-const INIT_TIMEOUT_MS = 120_000;
 
 /**
  * Throw the worker away and create a fresh one. The old worker is terminated, and its late
@@ -259,20 +267,13 @@ function post(request: WorkerRequest): void {
 
 // ---------------------------------------------------------------- saved position
 
-function describePosition(p: SavedPosition): string {
-  const minutes = Math.floor(p.seconds / 60);
-  const seconds = Math.floor(p.seconds % 60).toString().padStart(2, "0");
-  const ago = Math.round((Date.now() - p.savedAt) / 1000);
-  return `Saved: "${p.bookTitle}", chapter ${p.chapterIndex + 1}, sentence ${p.sentenceIndex + 1}, ${minutes}:${seconds} (${ago} s ago).`;
-}
-
 function refreshSavedUi(): void {
   const saved = loadPosition();
   if (!saved) {
     savedElement.textContent = "No saved position.";
   } else {
     const matches = openedBook?.id === saved.bookId;
-    savedElement.textContent = `${describePosition(saved)} ${
+    savedElement.textContent = `${describePosition(saved, Date.now())} ${
       matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
     }`;
   }
@@ -376,16 +377,9 @@ if (audioSession) {
 
 // ---------------------------------------------------------------- stuck playback recovery
 
-const STUCK_CHECK_MS = 1500;
-const SNAPSHOT_MS = 500;
-const MAX_RECOVERY_ATTEMPTS = 2;
-
-const METADATA_TIMEOUT_MS = 5000;
-
 // Token of the recovery in flight, or 0. Only that recovery may clear it.
 let recoveryOwner = 0;
 let recoveryCausedPause = false;
-const PAUSE_IGNORE_MS = 100;
 // Bumped by every new watch, user pause or source change. A recovery aborts when it changes.
 let watchToken = 0;
 // Recovery attempts used in the current resume episode. Reset only by a real play action or confirmed progress.
@@ -664,24 +658,6 @@ function renderText(sentences: Sentence[]): void {
   });
 }
 
-function sentenceIn(segment: Segment, seconds: number): number {
-  const timings = segment.timings;
-  let low = 0;
-  let high = timings.length - 1;
-  let found = 0;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const timing = timings[mid];
-    if (timing && timing.start <= seconds) {
-      found = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return segment.startSentence + found;
-}
-
 function sentenceAt(seconds: number): number {
   const segment = currentSegment();
   return segment ? sentenceIn(segment, seconds) : -1;
@@ -708,9 +684,7 @@ textElement.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement) || !loaded) return;
   const index = Number(target.dataset["index"]);
   if (!Number.isInteger(index)) return;
-  const segmentIndex = loaded.segments.findIndex(
-    (s) => index >= s.startSentence && index < s.startSentence + s.count,
-  );
+  const segmentIndex = segmentForSentence(loaded.segments, index);
   const segment = loaded.segments[segmentIndex];
   if (!segment) {
     void jumpToSentence(index);
@@ -769,13 +743,12 @@ function switchSegment(segmentIndex: number, offset: number, play: boolean, reas
 function dropFarSegments(): void {
   if (!loaded) return;
   const { segments, current } = loaded;
-  segments.forEach((segment, index) => {
-    if (!segment.blob || index === current) return;
-    if (index < current - SEGMENTS_BEHIND || index > current + SEGMENTS_AHEAD) {
-      segment.blob = undefined;
-      log(`segment ${index + 1} dropped`);
-    }
-  });
+  for (const index of farSegments(segments.length, current, SEGMENTS_BEHIND, SEGMENTS_AHEAD)) {
+    const segment = segments[index];
+    if (!segment?.blob) continue;
+    segment.blob = undefined;
+    log(`segment ${index + 1} dropped`);
+  }
 }
 
 /** Switch to a segment. If its audio was dropped, regenerate it first. */
@@ -1133,11 +1106,11 @@ function throwIfCancelled(): void {
  * loaded chapter plus all pending segments, so both share the SEGMENTS_AHEAD budget.
  */
 function segmentsAhead(segments: Segment[]): number {
-  if (loaded?.segments === segments) return segments.length - 1 - loaded.current;
+  if (loaded?.segments === segments) return segmentsAheadOf(segments.length, loaded.current);
   if (loaded && pendingChapter?.segments === segments) {
-    return loaded.segments.length - 1 - loaded.current + segments.length;
+    return segmentsAheadOf(loaded.segments.length, loaded.current, segments.length);
   }
-  return 0;
+  return segmentsAheadOf(undefined, 0);
 }
 
 /** Wait until fewer than SEGMENTS_AHEAD ready segments are queued after the playing one. */
@@ -1505,17 +1478,13 @@ function persistSettings(): void {
   saveSettings({ voiceId: selectedVoiceId(), speed });
 }
 
-function clampSpeed(value: number): number {
-  return Math.min(Math.max(value, SPEED_MIN), SPEED_MAX);
-}
-
 function showSpeed(): void {
   speedInput.value = String(speed);
   speedLabel.textContent = `${speed.toFixed(2)}x`;
 }
 
 function setSpeed(value: number, reason: string): void {
-  speed = Math.round(clampSpeed(value) * 100) / 100;
+  speed = roundSpeed(value);
   applyPlaybackRate();
   showSpeed();
   persistSettings();
@@ -1543,8 +1512,12 @@ audio.addEventListener("ratechange", () => {
  * that is the chapter being generated. Otherwise it is the loaded chapter. Undefined when neither exists.
  */
 function playingChapterIndex(): number | undefined {
-  if (generating && awaitingFirstSegment && generatingChapterIndex !== undefined) return generatingChapterIndex;
-  return loaded?.chapterIndex ?? (generating ? generatingChapterIndex : undefined);
+  return playingChapterIndexOf({
+    generating,
+    awaitingFirstSegment,
+    generatingChapterIndex,
+    loadedChapterIndex: loaded?.chapterIndex,
+  });
 }
 
 /** The chapter Previous/Next move from: the playing chapter, else the select value. */
@@ -1564,11 +1537,8 @@ function showPlayingChapter(): void {
  */
 function hasTextChapter(from: number, step: 1 | -1): boolean {
   const book = openedBook;
-  if (!book || !Number.isInteger(from)) return false;
-  for (let index = from + step; index >= 0 && index < book.chapters.length; index += step) {
-    if (chapterHasText[index] !== false) return true;
-  }
-  return false;
+  if (!book) return false;
+  return hasTextChapterIn(chapterHasText, book.chapters.length, from, step);
 }
 
 function updateControls(): void {
@@ -1705,7 +1675,7 @@ function initSettings(): void {
     } else {
       log(`saved voice ${saved.voiceId} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
     }
-    speed = Math.round(clampSpeed(saved.speed) * 100) / 100;
+    speed = roundSpeed(saved.speed);
   }
   voiceSelect.value = voiceId;
   applyPlaybackRate();
