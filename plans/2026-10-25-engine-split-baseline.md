@@ -183,3 +183,20 @@ Results: `npm run typecheck` OK (`boundaries OK: 18 files, 33 imports, 0 cycles,
 Same asset list, no new chunk. The e2e build has `index-CJXtiIq_.js` (408.72 kB).
 
 Line counts: `src/main.ts` 1632 (was 1724), `src/engine/voices-store.ts` 144.
+
+## Step 5a result
+
+Step 5a moves the book state and the chapter text logic into `src/engine/book.ts` (`createBook({ hooks })`, hooks: `notifyChange` only). It owns `opened` and the has-text array. API: live getters `opened` and `hasText` (the current array, no copy), `open(book)` (sets the book and a fresh array filled with `undefined`), `clear()`, `chapterSentences`, `findTextChapter` (exported `TextChapter`), `scanChapters`. `main.ts` creates it as `bookStore`, before `loaded` and before the first `refreshSavedUi()`, and calls `bookStore.chapterSentences(...)` etc. directly (no wrappers).
+
+Results: `npm run typecheck` OK (`boundaries OK: 19 files, 38 imports, 0 cycles, 8 engine files checked`), `npm test` 112 passed (9 files, new `book.test.ts`, 9 tests), `npm run test:e2e` 14 passed (12.6 s). `dist` has no `mock` string.
+
+| File in `dist/assets` | Size (vite, kB) | Step 4c |
+|---|---|---|
+| `index-6z_pOJXp.js` | 408.96 | 408.54 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-Bphzjj0A.js` (409.14 kB).
+
+Line counts: `src/main.ts` 1587 (was 1632), `src/engine/book.ts` 88.
