@@ -28,6 +28,7 @@ The app version shows in the footer. Licence: see `LICENSE`. Third-party licence
 - The generator stays at most 2 ready segments ahead of the playing one (`SEGMENTS_AHEAD`).
 - To cap memory, the app keeps the audio of 3 played segments behind the playing one (`SEGMENTS_BEHIND`). It drops older audio.
 - If you seek to a dropped segment, the app regenerates it on demand.
+- Tap a sentence to play from there. If the sentence is not generated yet, the app restarts generation from that sentence. Playback then starts after a short wait.
 - If playback reaches a segment that is not ready, the app shows "Buffering" and continues when the segment is ready.
 - The app saves the reading position. After a restart, pick the same EPUB and press "Resume saved position". Generation then restarts from the saved sentence.
 - The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward, seek forward, previous track and next track.

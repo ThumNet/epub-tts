@@ -692,7 +692,7 @@ textElement.addEventListener("click", (event) => {
   );
   const segment = loaded.segments[segmentIndex];
   if (!segment) {
-    log(`seek ignored: sentence ${index + 1} is not generated yet`);
+    void jumpToSentence(index);
     return;
   }
   const offset = segment.timings[index - segment.startSentence]?.start ?? 0;
@@ -1410,6 +1410,41 @@ async function runNavigation(
     statsElement.textContent = `Could not change the chapter: ${errorName(error)}`;
     log(`chapter change failed (${source}): ${errorName(error)}`);
     showPlayingChapter();
+  } finally {
+    navigating = false;
+    updateControls();
+  }
+}
+
+/**
+ * Jump to a sentence of the loaded chapter that is in no generated segment. The running generation
+ * is cancelled, then the same chapter restarts at that sentence. The `navigating` flag prevents
+ * overlap, so a click during a jump is ignored. Errors are caught here.
+ */
+async function jumpToSentence(sentenceIndex: number): Promise<void> {
+  const book = openedBook;
+  const chapter = loaded;
+  if (!book || !chapter || voiceBusy || navigating) {
+    log(`jump ignored: sentence ${sentenceIndex + 1} (${book && chapter ? "busy" : "nothing loaded"})`);
+    return;
+  }
+  if (sentenceIndex < 0 || sentenceIndex >= chapter.sentences.length) return;
+  navigating = true;
+  updateControls();
+  try {
+    log(`jump: restarting generation at sentence ${sentenceIndex + 1}`);
+    statsElement.textContent = `Jumping to sentence ${sentenceIndex + 1}...`;
+    if (generating) {
+      cancelGeneration();
+      await activeGeneration;
+    }
+    if (generating || book !== openedBook) return;
+    wantPlaying = true;
+    chapterSelect.value = String(chapter.chapterIndex);
+    void generateChapter(chapter.chapterIndex, sentenceIndex, chapter.sentences);
+  } catch (error) {
+    statsElement.textContent = `Could not jump to the sentence: ${errorName(error)}`;
+    log(`jump failed: ${errorName(error)}`);
   } finally {
     navigating = false;
     updateControls();
