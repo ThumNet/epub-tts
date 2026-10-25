@@ -200,3 +200,20 @@ Results: `npm run typecheck` OK (`boundaries OK: 19 files, 38 imports, 0 cycles,
 Same asset list, no new chunk. The e2e build has `index-Bphzjj0A.js` (409.14 kB).
 
 Line counts: `src/main.ts` 1587 (was 1632), `src/engine/book.ts` 88.
+
+## Step 5b result
+
+Step 5b moves the library flows into `src/engine/library.ts` (`createLibrary(deps)`). It owns `bookToken`, `bookRemembered`, `bookBusy`. API: live getters `remembered` and `busy`, `pick(file)`, `restore()`, `forget()`. `showBook`, `formatSize` and `showBookInfo` are private. Deps: `hooks`, `bookStore`, `isGenerating`, `cancelGeneration`, `activeGeneration` (live getter), `unloadChapter`, `isNavigating`, `isPaused`, `voicesBusy`. New hooks: `setBookInfo`, `appendBookInfo`, `fillChapters`, `clearChapters`, `refreshSaved`. `unloadChapter` stays in `main.ts` (playback code). The DOM listeners stay in `main.ts`; the `fileInput` listener reads the file, clears the input, then calls `library.pick(file)`.
+
+Results: `npm run typecheck` OK (`boundaries OK: 20 files, 45 imports, 0 cycles, 9 engine files checked`), `npm test` 143 passed (10 files, new `library.test.ts`, 31 tests), `npm run test:e2e` 14 passed (12.6 s). `dist` has no `mock` string.
+
+| File in `dist/assets` | Size (vite, kB) | Step 5a |
+|---|---|---|
+| `index-B2bJlnE8.js` | 409.62 | 408.96 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-DuAEKRiE.js` (409.80 kB).
+
+Line counts: `src/main.ts` 1474 (was 1587), `src/engine/library.ts` 198.

@@ -1,6 +1,4 @@
-import { openBook } from "./epub";
 import type { OpenBook, Sentence } from "./epub";
-import { forgetBook, loadBook, saveBook, storedBookToFile } from "./book-store";
 import { log, logText } from "./log";
 import {
   loadPosition,
@@ -16,6 +14,7 @@ import { createSettings } from "./engine/settings";
 import { createBook } from "./engine/book";
 import type { TextChapter } from "./engine/book";
 import { createVoicesStore } from "./engine/voices-store";
+import { createLibrary } from "./engine/library";
 import {
   MAX_RECOVERY_ATTEMPTS,
   METADATA_TIMEOUT_MS,
@@ -104,6 +103,21 @@ const hooks: EngineHooks = {
     textElement.replaceChildren();
   },
   getSelectedChapter: () => Number(chapterSelect.value),
+  setBookInfo: (text) => {
+    bookInfo.textContent = text;
+  },
+  appendBookInfo: (text) => {
+    bookInfo.textContent += text;
+  },
+  fillChapters: (chapters) => {
+    chapterSelect.replaceChildren(...chapters.map((c) => new Option(c.label, String(c.index))));
+    chapterSelect.disabled = false;
+  },
+  clearChapters: () => {
+    chapterSelect.replaceChildren();
+    chapterSelect.disabled = true;
+  },
+  refreshSaved: () => refreshSavedUi(),
 };
 
 const diagnostics = createDiagnostics({ audio, getVisibility: () => document.visibilityState });
@@ -201,12 +215,18 @@ const voices = createVoicesStore({
   isGenerating: () => generating,
   persistSettings: () => settings.persist(),
 });
-// Token of the newest book request (picked file, automatic restore or forget). A result with an older token is dropped.
-let bookToken = 0;
-// True while a book is stored on this device.
-let bookRemembered = false;
-// True while a forget request deletes the stored book. Locks the book controls.
-let bookBusy = false;
+// Pick, remember, restore and forget a book. Owns the book token, remembered and busy flags.
+const library = createLibrary({
+  hooks,
+  bookStore,
+  isGenerating: () => generating,
+  cancelGeneration: () => cancelGeneration(),
+  activeGeneration: () => activeGeneration,
+  unloadChapter: () => unloadChapter(),
+  isNavigating: () => navigating,
+  isPaused: () => audio.paused,
+  voicesBusy: () => voices.busy,
+});
 
 /** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
 function applyPlaybackRate(): void {
@@ -1086,7 +1106,7 @@ async function runGeneration(chapterIndex: number, startSentence: number, prepar
 }
 
 function generateChapter(chapterIndex: number, startSentence = 0, preparsed?: Sentence[]): Promise<void> {
-  if (!bookStore.opened || generating || bookBusy) return Promise.resolve();
+  if (!bookStore.opened || generating || library.busy) return Promise.resolve();
   activeGeneration = runGeneration(chapterIndex, startSentence, preparsed);
   return activeGeneration;
 }
@@ -1280,18 +1300,18 @@ function hasTextChapter(from: number, step: 1 | -1): boolean {
 }
 
 function updateControls(): void {
-  const locked = generating || voices.busy || bookBusy;
+  const locked = generating || voices.busy || library.busy;
   generateButton.disabled = locked || !bookStore.opened;
   cancelButton.disabled = !generating;
   const saved = loadPosition();
   resumeButton.disabled = locked || !saved || bookStore.opened?.id !== saved.bookId;
   voiceSelect.disabled = locked;
-  forgetButton.hidden = !bookRemembered;
-  forgetButton.disabled = locked || bookBusy || navigating || !audio.paused;
-  fileInput.disabled = bookBusy;
+  forgetButton.hidden = !library.remembered;
+  forgetButton.disabled = locked || library.busy || navigating || !audio.paused;
+  fileInput.disabled = library.busy;
   const base = navigationBase();
-  prevChapterButton.disabled = voices.busy || bookBusy || navigating || !hasTextChapter(base, -1);
-  nextChapterButton.disabled = voices.busy || bookBusy || navigating || !hasTextChapter(base, 1);
+  prevChapterButton.disabled = voices.busy || library.busy || navigating || !hasTextChapter(base, -1);
+  nextChapterButton.disabled = voices.busy || library.busy || navigating || !hasTextChapter(base, 1);
   voiceDownloadButton.disabled = locked || voices.stored !== false;
   voiceRemoveButton.disabled = locked || voices.stored !== true;
   if (voices.busy) {
@@ -1335,17 +1355,6 @@ initSettings();
 
 // ---------------------------------------------------------------- UI wiring
 
-function formatSize(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function showBookInfo(opened: OpenBook, note: string): void {
-  const parts = [note, `language: ${opened.language}`, `${opened.chapters.length} spine items`].filter(
-    (part) => part !== "",
-  );
-  bookInfo.textContent = `${opened.title} (${parts.join(", ")})`;
-}
-
 /** Stop playback and drop the loaded chapter. Call only when nothing is generating. */
 function unloadChapter(): void {
   if (!loaded) return;
@@ -1359,140 +1368,18 @@ function unloadChapter(): void {
   currentSentence = -1;
 }
 
-/**
- * Make `opened` the current book and set up the UI. Returns false when a newer book request
- * replaced this one while it waited, so the caller must drop its result.
- */
-async function showBook(opened: OpenBook, token: number, note: string): Promise<boolean> {
-  // A running generation and the loaded chapter belong to the previous book.
-  if (generating) {
-    log("new book opened: cancelling the running generation");
-    cancelGeneration();
-    await activeGeneration;
-    if (token !== bookToken) return false;
-  }
-  unloadChapter();
-  bookStore.open(opened);
-  showBookInfo(opened, note);
-  chapterSelect.replaceChildren(...opened.chapters.map((c) => new Option(c.label, String(c.index))));
-  chapterSelect.disabled = false;
-  log(`opened "${opened.title}" with ${opened.chapters.length} spine items`);
-  // Preselect the saved chapter when this is the saved book. Nothing starts by itself.
-  const savedPosition = loadPosition();
-  if (savedPosition?.bookId === opened.id && opened.chapters[savedPosition.chapterIndex]) {
-    hooks.showChapter(savedPosition.chapterIndex);
-    log(`restored saved chapter ${savedPosition.chapterIndex + 1}`);
-  }
-  refreshSavedUi();
-  void bookStore.scanChapters(opened);
-  return true;
-}
-
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   // Clear the input so picking the same file again fires a new change event. The File object stays valid.
   fileInput.value = "";
-  if (!file) return;
-  if (bookBusy) return;
-  const token = ++bookToken;
-  bookInfo.textContent = "Reading EPUB...";
-  openBook(file)
-    .then(async (opened) => {
-      if (token !== bookToken) return;
-      if (!(await showBook(opened, token, ""))) return;
-      // The book works now. Remember it without blocking the UI.
-      const result = await saveBook(file, opened.title);
-      if (token !== bookToken) return;
-      if (result.ok) {
-        bookRemembered = true;
-        showBookInfo(opened, `remembered ${formatSize(result.size)}`);
-      } else {
-        showBookInfo(opened, "");
-        bookInfo.textContent += `. Could not remember this book on this device: ${result.reason}`;
-      }
-      hooks.notifyChange();
-    })
-    .catch((error: unknown) => {
-      if (token !== bookToken) return;
-      bookInfo.textContent = `Could not open the EPUB: ${String(error)}`;
-      log(`epub error: ${String(error)}`);
-    });
+  library.pick(file);
 });
-
-/** Reopen the remembered book at startup. Never throws. A picked file or a forget request wins. */
-async function restoreBook(): Promise<void> {
-  const token = ++bookToken;
-  try {
-    const stored = await loadBook();
-    if (!stored) return;
-    if (token !== bookToken) return;
-    log(`restore start: "${stored.name}" (${stored.size} bytes)`);
-    bookInfo.textContent = "Restoring the remembered book...";
-    try {
-      const opened = await openBook(storedBookToFile(stored));
-      if (token !== bookToken) {
-        log("restore dropped: a newer book request won");
-        return;
-      }
-      bookRemembered = true;
-      if (!(await showBook(opened, token, `restored from this device, ${formatSize(stored.size)}`))) {
-        log("restore dropped: a newer book request won");
-        return;
-      }
-      log(`restore ok: "${opened.title}"`);
-    } catch (error) {
-      log(`restore failed: ${errorName(error)}`);
-      if (token !== bookToken) return;
-      const forgotten = await forgetBook();
-      if (token !== bookToken) return;
-      bookRemembered = false;
-      bookInfo.textContent = forgotten
-        ? "Could not reopen the remembered book. It was forgotten. Pick an EPUB again."
-        : "Could not reopen the remembered book, and it could not be deleted. Pick an EPUB again.";
-      log(forgotten ? "restore failed: stored book forgotten" : "restore failed: stored book could not be deleted");
-    }
-  } catch (error) {
-    log(`restore failed: ${errorName(error)}`);
-  } finally {
-    hooks.notifyChange();
-  }
-}
 
 audio.addEventListener("play", () => hooks.notifyChange());
 audio.addEventListener("pause", () => hooks.notifyChange());
 
 forgetButton.addEventListener("click", () => {
-  if (!bookRemembered || bookBusy || generating || voices.busy || navigating || !audio.paused) return;
-  const token = ++bookToken;
-  bookBusy = true;
-  hooks.notifyChange();
-  void (async () => {
-    try {
-      const ok = await forgetBook();
-      if (token !== bookToken) return;
-      if (!ok) {
-        bookInfo.textContent = "Could not forget the book on this device.";
-        return;
-      }
-      bookRemembered = false;
-      // Defensive: the controls are locked during the delete, so nothing should be generating.
-      if (generating) {
-        log("book forgotten while generating: the loaded book stays until the generation ends");
-        return;
-      }
-      unloadChapter();
-      bookStore.clear();
-      chapterSelect.replaceChildren();
-      chapterSelect.disabled = true;
-      bookInfo.textContent = "";
-      hooks.clearText();
-      log("book forgotten: the saved position and settings stay");
-      refreshSavedUi();
-    } finally {
-      bookBusy = false;
-      hooks.notifyChange();
-    }
-  })();
+  library.forget();
 });
 
 chapterSelect.addEventListener("change", () => {
@@ -1582,6 +1469,6 @@ copyLogButton.addEventListener("click", () => {
   );
 });
 
-void restoreBook();
+void library.restore();
 
 log("ready");
