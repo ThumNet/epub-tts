@@ -2,7 +2,7 @@
   "name": "epub-tts",
   "private": true,
   "version": "0.0.1",
-  "description": "Throwaway prototype: does a pre-generated chapter keep playing with the screen locked?",
+  "description": "EPUB reader that reads chapters aloud with Piper TTS in the browser, streamed in segments.",
   "type": "module",
   "scripts": {
     "dev": "vite",

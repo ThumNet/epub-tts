@@ -4,7 +4,7 @@ export interface Clip {
 }
 
 export interface Timing {
-  /** Start of the sentence in the chapter file, in seconds. */
+  /** Start of the sentence in the joined file (one segment), in seconds. */
   start: number;
   /** End of the spoken audio of the sentence, in seconds. */
   end: number;

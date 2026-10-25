@@ -1,5 +1,5 @@
 ---
-outcome: A throwaway prototype that answers one question. Does a pre-generated chapter keep playing, and can it pause and resume, with the phone screen locked?
+outcome: "Outdated, original outcome. See Status below. A throwaway prototype that answers one question. Does a pre-generated chapter keep playing, and can it pause and resume, with the phone screen locked?"
 scope: Vite and vanilla TypeScript. Piper TTS in a Web Worker. English only. One chapter at a time. No tests. No polish. Static hosting on GitHub Pages.
 acceptance: The page builds and deploys. The phone tests below run on iPhone Safari, the installed iPhone app, and Android Chrome. Each result is written down.
 source: "chat session 2026-10-25, deep-research runs run_6ec6ffa55e41 / run_e743bd8d338d / run_045ccc6c34bd"
@@ -7,13 +7,36 @@ source: "chat session 2026-10-25, deep-research runs run_6ec6ffa55e41 / run_e743
 
 # PLAN: EPUB reader with in-browser neural TTS
 
+## Status (updated at merge to main)
+
+This plan started as a phone-test prototype. The app has moved on. Some sections below keep the original text as history. Each outdated part is marked "Outdated".
+
+Current behaviour, verified in `src/main.ts`:
+
+- The app has no character limit.
+- The app streams a chapter in segments of about 60 seconds (`SEGMENT_TARGET_S`). It does not generate the whole chapter first.
+- The generator stays at most 2 segments ahead (`SEGMENTS_AHEAD`). The app keeps 3 played segments behind (`SEGMENTS_BEHIND`) and drops older audio to cap memory.
+- The app regenerates a dropped segment on demand.
+- The app sets `navigator.audioSession.type` to `playback` and runs a stuck-resume watchdog. The watchdog reloads the current segment, with at most 2 attempts for each resume.
+- The watchdog starts on a Media Session play, on the first segment start, on a segment switch that plays, on a recovery follow-up, and when the page becomes visible during playback. A play from the native audio controls does not start it.
+- The app logs diagnostics and saves and resumes the reading position.
+
+Observation from the owner's phone tests (not verified in source):
+
+- After a pause of about 3 to 6 seconds in the background, lock-screen resume stops until the app is in the foreground.
+- Source: the owner's own log on one iPhone (iOS 18.7), in a Safari tab and in the home-screen app. We did not verify it on other devices or iOS versions.
+- See "Known limitations / maintenance notes" in `README.md`.
+- Ideas not done for that limit: a silent keep-alive audio, and a native wrapper.
+
+Open: the phone test results are not recorded here. The "Tests to run on phone" checklist still applies.
+
 ## Goal
 
 Build a personal installable PWA. It runs on a static host with no backend. It reads EPUB files aloud with natural neural TTS that runs in the browser.
 
 Target languages are English and Dutch. iPhone and Android are the primary devices.
 
-This prototype answers one question. Does a pre-generated chapter keep playing, and can it pause and resume, with the screen locked?
+Outdated: the first prototype answered one question. Did a pre-generated chapter keep playing, and could it pause and resume, with the screen locked? The app now streams segments. See "Status".
 
 ## Decisions so far
 
@@ -30,7 +53,7 @@ This prototype answers one question. Does a pre-generated chapter keep playing, 
   - Pause from the lock screen worked.
   - Resume after about 20 seconds failed.
   - Kokoro sounds better on desktop. It is not for phones.
-- The app pre-generates audio per chapter. It does not buffer live.
+- The app pre-generates audio per chapter. It does not buffer live. (Outdated: the app now generates ahead in 60 s segments. See "Status".)
 - The app will detect the language from the EPUB metadata later.
 - First-version features:
   - text highlighting
@@ -41,9 +64,9 @@ This prototype answers one question. Does a pre-generated chapter keep playing, 
 - Download size does not matter.
 - "Dutch must sound equally natural" is not resolved. English comes first. Dutch comes later.
 
-## Prototype scope
+## Prototype scope (Outdated: original scope. See "Status" for the current behaviour.)
 
-The prototype is throwaway code. It has no tests and no polish.
+The prototype was throwaway code. It had no tests and no polish. The list below describes the first version. The app now joins clips into segments of about 60 seconds, not one chapter file.
 
 What it does:
 
@@ -97,7 +120,7 @@ Paths I considered and did not choose:
   Sources: https://github.com/k2-fsa/sherpa-onnx and https://k2-fsa.github.io/sherpa/onnx/tts/piper.html
 - `piper-tts-web` 1.1.2 (Poket-Jony). The npm metadata shows version 1.1.2, an MIT licence and the dependencies `@huggingface/transformers` and `onnxruntime-web`. Source: https://registry.npmjs.org/piper-tts-web. Its README lists WebWorker support. It tells Vite users to copy the `dist/onnx`, `dist/piper` and `dist/worker` folders into the public directory. Source: https://unpkg.com/piper-tts-web@1.1.2/README.md. I did not test it. I judge it needs more setup for the same result. This is my opinion, not a measured result.
 
-Not verified: I ran no browser. The build passes. I did not hear any audio. The first real check is on the phone.
+Outdated: when I wrote this, I ran no browser and heard no audio. The app has since run on the owner's phone.
 
 ### Hosting
 
@@ -111,7 +134,7 @@ Not verified: I ran no browser. The build passes. I did not hear any audio. The 
 
 ## Tests to run on phone
 
-Use a chapter of 10 to 15 minutes of audio. The default limit of 9,000 characters gives about 10 minutes. Set 13,500 for about 15 minutes.
+Outdated: the character limit no longer exists. The app reads the whole chapter. Use a long chapter (10 to 15 minutes of audio or more) for the tests. The old limit input (9,000 characters for about 10 minutes) is gone.
 
 Run the list in this order:
 
@@ -134,8 +157,8 @@ After each run, press "Copy log" and save the log with the device, browser and r
 ## What results decide
 
 - Resume works from the file. The design holds.
-- Resume fails after some delay. Offer "continue from saved position" when the app reopens.
-- Generation is too slow, or the tab is killed. Generate smaller units (a paragraph) or use a smaller Piper voice.
+- Resume fails after some delay. Offer "continue from saved position" when the app reopens. (Status: on the owner's iPhone, resume failed after about 3 to 6 s in the background. This comes from one device and is not verified elsewhere. The app offers the saved position.)
+- Generation is too slow, or the tab is killed. Generate smaller units (a paragraph) or use a smaller Piper voice. (Status: the app now generates 60 s segments.)
 
 ## Not decided
 
@@ -149,9 +172,9 @@ After each run, press "Copy log" and save the log with the device, browser and r
 
 ## Risks
 
-- **No audio check yet.** I could not hear audio or use a phone. The build passes and the page serves. Piper inference in the browser is untested.
+- **No audio check yet.** (Outdated: the app now works on the owner's phone. Per-device results are not recorded.) I could not hear audio or use a phone when I wrote this. Piper inference in the browser was untested then.
 - **Single-source claims.** The numbers about iPhone Safari (about 800 ms inference, tab memory ceilings of about 256 MB on iOS and about 512 MB on Android, tab kills, unreliable threads) come from one developer's blog (quick-tts.com). Treat them as unconfirmed.
-- **Memory.** The voice model is about 63 MB. ONNX Runtime and the 15 MB-plus WASM add more. The chapter WAV adds about 2.6 MB per minute (22,050 Hz, 16-bit). The decoded clips stay in memory during generation. A 15-minute chapter may exceed the iOS tab limit. Test 6 measures this.
+- **Memory.** (Partly outdated: the segment window now caps the audio kept in memory.) The voice model is about 63 MB. ONNX Runtime and the 15 MB-plus WASM add more. A segment WAV adds about 2.6 MB per minute (22,050 Hz, 16-bit). Test 6 measures tab kills.
 - **OPFS on Safari.** The library caches the model with `createWritable`. Safari may not support this call. The library then ignores the error and downloads 63 MB again on every load. The prototype does not fix this.
 - **Library hard-codes the model URL.** The model comes from Hugging Face. The app cannot host the model on its own origin without a patch to the library. If Hugging Face changes the path, the voice fails to load.
 - **Thread count.** The library sets the thread count to `navigator.hardwareConcurrency`. ONNX Runtime falls back to one thread when the page is not cross-origin isolated. A first load on Android Chrome reloads once after `coi-serviceworker` installs.
