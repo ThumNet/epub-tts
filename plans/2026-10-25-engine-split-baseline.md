@@ -149,3 +149,20 @@ Results: `npm run typecheck` OK (`boundaries OK: 16 files, 24 imports, 0 cycles,
 Same asset list, no new chunk. The e2e build has `index-DP79wuly.js` (407.88 kB).
 
 Line counts: `src/main.ts` 1737 (was 1793), `src/engine/diagnostics.ts` 98.
+
+## Step 4b result
+
+Step 4b moves the settings state into `src/engine/settings.ts` (`createSettings({ audio })`). API: `speed` and `voiceId` getters, `setVoiceId(id)` (unknown id falls back to the default voice, as `selectedVoiceId()` did), `setSpeed(value)` (rounds, no log, no DOM), `applyPlaybackRate()` (the three assignments, including `preservesPitch`), `persist()`, `load()` (reads the saved settings into the state, returns `{ voiceId, speed, rejectedVoice? }`, writes nothing). `main.ts` keeps `showSpeed`, the `setSpeed(value, reason)` wrapper with its log line, `initSettings` with its log lines, and a thin `applyPlaybackRate()` wrapper. The voice `change` handler calls `settings.setVoiceId(voiceSelect.value)` first.
+
+Results: `npm run typecheck` OK (`boundaries OK: 17 files, 28 imports, 0 cycles, 6 engine files checked`), `npm test` 90 passed (7 files, new `settings.test.ts`), `npm run test:e2e` 14 passed (12.9 s). `dist` has no `mock` string.
+
+| File in `dist/assets` | Size (vite, kB) | Step 4a |
+|---|---|---|
+| `index-oMhJka7f.js` | 408.11 | 407.70 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-cjE_ysxU.js` (408.29 kB).
+
+Line counts: `src/main.ts` 1724 (was 1737), `src/engine/settings.ts` 76.

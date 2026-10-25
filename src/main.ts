@@ -4,9 +4,7 @@ import { forgetBook, loadBook, saveBook, storedBookToFile } from "./book-store";
 import { log, logText } from "./log";
 import {
   loadPosition,
-  loadSettings,
   savePosition,
-  saveSettings,
   setGenerationMarker,
 } from "./store";
 import { DEFAULT_VOICE_ID, VOICES, findVoice, removeVoiceFiles } from "./voices";
@@ -15,6 +13,7 @@ import { joinClips } from "./wav";
 import { createWorkerClient, VoiceChangedError } from "./engine/worker-client";
 import type { GeneratedClip } from "./engine/worker-client";
 import { createDiagnostics } from "./engine/diagnostics";
+import { createSettings } from "./engine/settings";
 import {
   MAX_RECOVERY_ATTEMPTS,
   METADATA_TIMEOUT_MS,
@@ -36,7 +35,6 @@ import {
   farSegments,
   hasTextChapter as hasTextChapterIn,
   playingChapterIndex as playingChapterIndexOf,
-  roundSpeed,
   segmentForSentence,
   segmentsAhead as segmentsAheadOf,
   sentenceIn,
@@ -193,8 +191,8 @@ let generationVoiceId = "";
 let buffering = false;
 // True while the user wants sound: set by play, cleared by a user or media-session pause.
 let wantPlaying = false;
-// Playback speed. Reapplied after every audio.src change.
-let speed = 1;
+// Playback speed and voice id. The speed is reapplied after every audio.src change.
+const settings = createSettings({ audio });
 // True while a voice download or removal runs.
 let voiceBusy = false;
 // Whether the selected voice is in the browser storage. Undefined when unknown.
@@ -212,9 +210,7 @@ let bookBusy = false;
 
 /** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
 function applyPlaybackRate(): void {
-  audio.defaultPlaybackRate = speed;
-  audio.playbackRate = speed;
-  audio.preservesPitch = true;
+  settings.applyPlaybackRate();
 }
 // Resolves the generator's "wait for room" pause. Set only while the generator waits.
 let wakeGeneration: (() => void) | undefined;
@@ -1249,24 +1245,20 @@ async function selectChapter(index: number): Promise<void> {
 // ---------------------------------------------------------------- voice and speed settings
 
 function selectedVoiceId(): string {
-  return findVoice(voiceSelect.value)?.id ?? DEFAULT_VOICE_ID;
-}
-
-function persistSettings(): void {
-  saveSettings({ voiceId: selectedVoiceId(), speed });
+  return settings.voiceId;
 }
 
 function showSpeed(): void {
-  speedInput.value = String(speed);
-  speedLabel.textContent = `${speed.toFixed(2)}x`;
+  speedInput.value = String(settings.speed);
+  speedLabel.textContent = `${settings.speed.toFixed(2)}x`;
 }
 
 function setSpeed(value: number, reason: string): void {
-  speed = roundSpeed(value);
+  settings.setSpeed(value);
   applyPlaybackRate();
   showSpeed();
-  persistSettings();
-  log(`speed set to ${speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
+  settings.persist();
+  log(`speed set to ${settings.speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
 }
 
 speedInput.addEventListener("input", () => {
@@ -1378,8 +1370,9 @@ async function waitUntilStored(id: string): Promise<boolean> {
 }
 
 voiceSelect.addEventListener("change", () => {
+  settings.setVoiceId(voiceSelect.value);
   const id = selectedVoiceId();
-  persistSettings();
+  settings.persist();
   log(`voice selected: ${id}. The worker switches before the next generation.`);
   voiceStored = undefined;
   voiceError = "";
@@ -1445,21 +1438,15 @@ voiceRemoveButton.addEventListener("click", () => {
 
 function initSettings(): void {
   voiceSelect.replaceChildren(...VOICES.map((voice) => new Option(voice.label, voice.id)));
-  const saved = loadSettings();
-  let voiceId = DEFAULT_VOICE_ID;
-  if (saved) {
-    if (findVoice(saved.voiceId)) {
-      voiceId = saved.voiceId;
-    } else {
-      log(`saved voice ${saved.voiceId} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
-    }
-    speed = roundSpeed(saved.speed);
+  const { voiceId, rejectedVoice } = settings.load();
+  if (rejectedVoice !== undefined) {
+    log(`saved voice ${rejectedVoice} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
   }
   voiceSelect.value = voiceId;
   applyPlaybackRate();
   showSpeed();
-  persistSettings();
-  log(`settings: voice=${voiceId} speed=${speed.toFixed(2)}x`);
+  settings.persist();
+  log(`settings: voice=${voiceId} speed=${settings.speed.toFixed(2)}x`);
   hooks.notifyChange();
   void refreshVoiceStatus();
 }
