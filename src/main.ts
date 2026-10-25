@@ -145,7 +145,10 @@ setInterval(() => {
 
 setInterval(() => {
   if (!audio.paused) {
-    log(`heartbeat: visibility=${document.visibilityState} t=${audio.currentTime.toFixed(1)} s`);
+    log(
+      `heartbeat: visibility=${document.visibilityState} t=${audio.currentTime.toFixed(1)} s ` +
+        `readyState=${audio.readyState} networkState=${audio.networkState}`,
+    );
   }
 }, HEARTBEAT_MS);
 
@@ -155,9 +158,11 @@ refreshSavedUi();
 
 document.addEventListener("visibilitychange", () => {
   log(
-    `visibilitychange: ${document.visibilityState} (audio ${audio.paused ? "paused" : "playing"} at ${audio.currentTime.toFixed(1)} s)`,
+    `visibilitychange: ${document.visibilityState} (audio ${audio.paused ? "paused" : "playing"} at ${audio.currentTime.toFixed(1)} s, ` +
+      `readyState=${audio.readyState} networkState=${audio.networkState})`,
   );
   if (document.visibilityState === "hidden") persistPosition("hidden");
+  else if (document.visibilityState === "visible" && !audio.paused) watchForStuckPlayback("visible", false);
 });
 window.addEventListener("pagehide", (event) => {
   log(`pagehide persisted=${event.persisted}`);
@@ -167,20 +172,223 @@ window.addEventListener("pageshow", (event) => log(`pageshow persisted=${event.p
 document.addEventListener("freeze", () => log("freeze"));
 document.addEventListener("resume", () => log("resume (page lifecycle)"));
 
-for (const name of ["play", "pause", "ended", "waiting", "stalled", "suspend", "error", "seeked"]) {
+const AUDIO_EVENTS = [
+  "play",
+  "playing",
+  "pause",
+  "ended",
+  "waiting",
+  "stalled",
+  "suspend",
+  "emptied",
+  "loadedmetadata",
+  "error",
+  "seeked",
+];
+for (const name of AUDIO_EVENTS) {
   audio.addEventListener(name, () => {
     const detail = name === "error" ? ` code=${audio.error?.code ?? "?"}` : "";
     log(`audio ${name} at ${audio.currentTime.toFixed(1)} s${detail}`);
   });
 }
 
+// ---------------------------------------------------------------- audio session
+
+interface AudioSessionLike {
+  type: string;
+}
+
+function isAudioSession(value: unknown): value is AudioSessionLike {
+  return typeof value === "object" && value !== null && "type" in value;
+}
+
+function findAudioSession(): AudioSessionLike | undefined {
+  if (!("audioSession" in navigator)) return undefined;
+  const candidate: unknown = navigator.audioSession;
+  return isAudioSession(candidate) ? candidate : undefined;
+}
+
+const audioSession = findAudioSession();
+if (audioSession) {
+  try {
+    audioSession.type = "playback";
+    log(`audioSession.type set to "${audioSession.type}"`);
+  } catch (error) {
+    log(`audioSession.type could not be set: ${String(error)}`);
+  }
+} else {
+  log("audioSession: not supported");
+}
+
+// ---------------------------------------------------------------- stuck playback recovery
+
+const STUCK_CHECK_MS = 1500;
+const SNAPSHOT_MS = 500;
+const MAX_RECOVERY_ATTEMPTS = 2;
+
+const METADATA_TIMEOUT_MS = 5000;
+
+// Token of the recovery in flight, or 0. Only that recovery may clear it.
+let recoveryOwner = 0;
+let recoveryCausedPause = false;
+const PAUSE_IGNORE_MS = 100;
+// Bumped by every new watch, user pause or source change. A recovery aborts when it changes.
+let watchToken = 0;
+// Recovery attempts used in the current resume episode. Reset only by a real play action or confirmed progress.
+let attemptsUsed = 0;
+
+function snapshot(label: string): string {
+  return (
+    `${label}: paused=${audio.paused} t=${audio.currentTime.toFixed(2)} s ` +
+    `readyState=${audio.readyState} networkState=${audio.networkState}`
+  );
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+function waitForMetadata(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      resolve();
+      return;
+    }
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      audio.removeEventListener("loadedmetadata", onLoaded);
+      audio.removeEventListener("error", onError);
+    };
+    const onLoaded = (): void => {
+      cleanup();
+      resolve();
+    };
+    const onError = (): void => {
+      cleanup();
+      reject(new Error(`media error code=${audio.error?.code ?? "?"} while waiting for metadata`));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`metadata timeout after ${METADATA_TIMEOUT_MS} ms`));
+    }, METADATA_TIMEOUT_MS);
+    audio.addEventListener("loadedmetadata", onLoaded);
+    audio.addEventListener("error", onError);
+  });
+}
+
+async function recoverPlayback(attempt: number, token: number): Promise<void> {
+  if (!loaded) return;
+  // A newer episode takes over. An older recovery aborts at its next stillValid() check.
+  recoveryOwner = token;
+  const chapterAtStart = loaded;
+  const newUrl = URL.createObjectURL(loaded.chapter.blob);
+  const stillValid = (): boolean =>
+    token === watchToken && loaded === chapterAtStart && loaded.url === newUrl;
+  try {
+    const resumeAt = audio.currentTime;
+    log(`recovery ${attempt}/${MAX_RECOVERY_ATTEMPTS}: reloading audio, saved t=${resumeAt.toFixed(2)} s`);
+    const oldUrl = loaded.url;
+    loaded.url = newUrl;
+    // The src change and load() may emit a pause event. Ignore only that one.
+    recoveryCausedPause = true;
+    setTimeout(() => (recoveryCausedPause = false), PAUSE_IGNORE_MS);
+    audio.src = newUrl;
+    URL.revokeObjectURL(oldUrl);
+    audio.load();
+    log("recovery: load() called, waiting for metadata");
+    await waitForMetadata();
+    if (!stillValid()) {
+      log("recovery: aborted after metadata (pause, newer resume, or source changed)");
+      return;
+    }
+    audio.currentTime = resumeAt;
+    log(`recovery: metadata loaded, currentTime restored to ${resumeAt.toFixed(2)} s`);
+    const startedAt = Date.now();
+    const played = audio.play();
+    played.then(
+      () => log(`recovery: play() resolved after ${Date.now() - startedAt} ms`),
+      (error: unknown) =>
+        log(`recovery: play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
+    );
+    navigator.mediaSession.playbackState = "playing";
+    setTimeout(() => {
+      if (stillValid()) log(snapshot("recovery: state 500 ms after play"));
+      else log("recovery: 500 ms snapshot skipped, superseded or source changed");
+    }, SNAPSHOT_MS);
+    // Release ownership now and keep watching, so a pending play() is still detected.
+    if (recoveryOwner === token) recoveryOwner = 0;
+    watchForStuckPlayback("recovery", false);
+  } catch (error) {
+    log(`recovery: failed: ${errorName(error)}`);
+  } finally {
+    if (recoveryOwner === token) recoveryOwner = 0;
+  }
+}
+
+/**
+ * Starts the stuck-playback watchdog. Call right after play() is fired, without awaiting it.
+ * `newEpisode` is true only for a real play action. It always supersedes any in-flight recovery
+ * and resets the attempt budget.
+ */
+function watchForStuckPlayback(reason: string, newEpisode: boolean): void {
+  if (!newEpisode && recoveryOwner !== 0) {
+    log(`stuck watch (${reason}): recovery already running, skipped`);
+    return;
+  }
+  if (newEpisode) attemptsUsed = 0;
+  const token = ++watchToken;
+  const startTime = audio.currentTime;
+  log(`stuck watch (${reason}): start t=${startTime.toFixed(2)} s attemptsUsed=${attemptsUsed}`);
+  setTimeout(() => {
+    if (token === watchToken) log(snapshot(`post-play snapshot (${reason})`));
+  }, SNAPSHOT_MS);
+  setTimeout(() => {
+    if (token !== watchToken) return;
+    if (audio.paused) {
+      log(`stuck watch (${reason}): audio is paused, nothing to recover`);
+      return;
+    }
+    if (audio.currentTime > startTime) {
+      log(`stuck watch (${reason}): ok, t advanced to ${audio.currentTime.toFixed(2)} s`);
+      attemptsUsed = 0;
+      return;
+    }
+    log(`stuck watch (${reason}): currentTime did not advance. ${snapshot("state")}`);
+    if (attemptsUsed >= MAX_RECOVERY_ATTEMPTS) {
+      log("stuck watch: giving up, recovery attempts used up for this resume");
+      return;
+    }
+    attemptsUsed += 1;
+    void recoverPlayback(attemptsUsed, token);
+  }, STUCK_CHECK_MS);
+}
+
+function playFromMediaSession(): void {
+  // Fire play(), start the watchdog at once, and log the promise result whenever it settles.
+  const startedAt = Date.now();
+  const promise = audio.play();
+  watchForStuckPlayback("media session play", true);
+  promise.then(
+    () => log(`audio.play() resolved after ${Date.now() - startedAt} ms`),
+    (error: unknown) => log(`audio.play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
+  );
+}
+
+audio.addEventListener("pause", () => {
+  if (recoveryCausedPause) return;
+  watchToken += 1;
+});
+
 // ---------------------------------------------------------------- media session
 
 function setupMediaSession(): void {
   const session = navigator.mediaSession;
   const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
-    ["play", () => void audio.play()],
-    ["pause", () => audio.pause()],
+    ["play", () => playFromMediaSession()],
+    ["pause", () => {
+      watchToken += 1;
+      audio.pause();
+    }],
     [
       "seekto",
       (details) => {
