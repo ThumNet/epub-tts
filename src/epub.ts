@@ -76,8 +76,8 @@ export async function chapterParagraphs(open: OpenBook, index: number): Promise<
   return texts.map((t) => t.replace(/\s+/g, " ").trim()).filter((t) => /[\p{L}\p{N}]/u.test(t));
 }
 
-/** Split paragraphs into sentences with Intl.Segmenter. Stop once `charLimit` characters are collected. */
-export function splitSentences(paragraphs: string[], language: string, charLimit: number): Sentence[] {
+/** Split paragraphs into sentences with Intl.Segmenter. */
+export function splitSentences(paragraphs: string[], language: string): Sentence[] {
   let segmenter: Intl.Segmenter;
   try {
     segmenter = new Intl.Segmenter(language, { granularity: "sentence" });
@@ -85,19 +85,15 @@ export function splitSentences(paragraphs: string[], language: string, charLimit
     segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
   }
   const out: Sentence[] = [];
-  let chars = 0;
   for (const paragraph of paragraphs) {
     const start = out.length;
     for (const part of segmenter.segment(paragraph)) {
       const text = part.segment.trim();
       if (!/[\p{L}\p{N}]/u.test(text)) continue;
       out.push({ text, paragraphEnd: false });
-      chars += text.length;
-      if (chars >= charLimit) break;
     }
     const last = out[out.length - 1];
     if (last && out.length > start) last.paragraphEnd = true;
-    if (chars >= charLimit) break;
   }
   return out;
 }

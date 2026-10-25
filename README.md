@@ -40,7 +40,7 @@ The workflow sets `VITE_BASE` to `/<repository name>/`. To build by hand for ano
 
 ## Run the phone tests
 
-Use an EPUB with a chapter of 10 to 15 minutes of audio. The default limit of 9,000 characters gives about 10 minutes. Set 13,500 for about 15 minutes.
+Use any EPUB. The app reads the whole chapter, in segments of about one minute.
 
 1. Open the deployed page on the phone. Use a Safari tab first.
 2. Pick the EPUB file. Pick the chapter. Press "Generate chapter audio". Keep the screen on until generation ends.

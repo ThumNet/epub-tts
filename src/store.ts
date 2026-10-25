@@ -6,6 +6,7 @@ export interface SavedPosition {
   bookId: string;
   bookTitle: string;
   chapterIndex: number;
+  /** Kept for old saves. Ignored on load. New saves write 0. */
   charLimit: number;
   sentenceIndex: number;
   seconds: number;
