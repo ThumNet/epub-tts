@@ -27,6 +27,9 @@
       pre { margin: 0; font-size: 0.8rem; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; -webkit-overflow-scrolling: touch; }
       details summary { cursor: pointer; font-weight: bold; min-height: 44px; display: flex; align-items: center; }
       #copy-log { min-width: 120px; }
+      #speed { flex: 1; min-width: 120px; min-height: 44px; }
+      #speed-label { min-width: 3.5em; font-variant-numeric: tabular-nums; }
+      #voice-status { font-size: 0.85rem; color: #aaa; }
       #copy-status { font-size: 0.85rem; color: #8c8; }
       footer { margin: 12px 0 0; font-size: 0.8rem; color: #888; text-align: center; }
       .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -44,7 +47,12 @@
       <label for="chapter">2. Pick a chapter</label>
       <select id="chapter" disabled></select>
       <label for="voice">Voice</label>
-      <input id="voice" value="en_US-kristin-medium" />
+      <select id="voice"></select>
+      <div class="row">
+        <span id="voice-status" role="status">Checking voice...</span>
+        <button id="voice-download" type="button" disabled>Download</button>
+        <button id="voice-remove" type="button" disabled>Remove</button>
+      </div>
       <div class="row">
         <button id="generate" disabled>3. Generate chapter audio</button>
         <button id="cancel" disabled>Cancel</button>
@@ -55,6 +63,12 @@
 
     <section>
       <audio id="audio" controls preload="auto"></audio>
+      <div class="row">
+        <label for="speed">Speed</label>
+        <input id="speed" type="range" min="0.75" max="2" step="0.05" value="1" />
+        <span id="speed-label">1.00x</span>
+        <button id="speed-reset" type="button">Reset to 1x</button>
+      </div>
       <div id="text"></div>
     </section>
 

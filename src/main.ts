@@ -5,10 +5,14 @@ import type { WorkerEvent, WorkerRequest } from "./protocol";
 import {
   loadGenerationMarker,
   loadPosition,
+  loadSettings,
   savePosition,
+  saveSettings,
   setGenerationMarker,
 } from "./store";
 import type { SavedPosition } from "./store";
+import { DEFAULT_VOICE_ID, VOICES, findVoice } from "./voices";
+import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
 import { joinClips } from "./wav";
 import type { Clip, Timing } from "./wav";
 
@@ -33,7 +37,13 @@ function byId<T extends HTMLElement>(id: string, type: new () => T): T {
 const fileInput = byId("file", HTMLInputElement);
 const bookInfo = byId("book", HTMLDivElement);
 const chapterSelect = byId("chapter", HTMLSelectElement);
-const voiceInput = byId("voice", HTMLInputElement);
+const voiceSelect = byId("voice", HTMLSelectElement);
+const voiceStatus = byId("voice-status", HTMLSpanElement);
+const voiceDownloadButton = byId("voice-download", HTMLButtonElement);
+const voiceRemoveButton = byId("voice-remove", HTMLButtonElement);
+const speedInput = byId("speed", HTMLInputElement);
+const speedLabel = byId("speed-label", HTMLSpanElement);
+const speedResetButton = byId("speed-reset", HTMLButtonElement);
 const generateButton = byId("generate", HTMLButtonElement);
 const cancelButton = byId("cancel", HTMLButtonElement);
 const resumeButton = byId("resume", HTMLButtonElement);
@@ -94,6 +104,8 @@ interface Segment {
 
 interface LoadedChapter {
   chapterIndex: number;
+  /** The voice that generated this chapter. Dropped segments regenerate with the same voice. */
+  voiceId: string;
   /** All sentences of the chapter. Sentence indexes everywhere else are indexes into this array. */
   sentences: Sentence[];
   /** Segments generated so far, in order. The generator appends to this array. */
@@ -109,10 +121,29 @@ let loaded: LoadedChapter | undefined;
 let currentSentence = -1;
 let generating = false;
 let cancelRequested = false;
+// The voice of the generation in progress. Set when generating starts.
+let generationVoiceId = "";
 // True while the current segment has ended and the next one is not generated yet.
 let buffering = false;
 // True while the user wants sound: set by play, cleared by a user or media-session pause.
 let wantPlaying = false;
+// Playback speed. Reapplied after every audio.src change.
+let speed = 1;
+const SPEED_MIN = 0.75;
+const SPEED_MAX = 2;
+// True while a voice download or removal runs.
+let voiceBusy = false;
+// Whether the selected voice is in the browser storage. Undefined when unknown.
+let voiceStored: boolean | undefined;
+let voiceMessage = "";
+let voiceStatusToken = 0;
+
+/** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
+function applyPlaybackRate(): void {
+  audio.defaultPlaybackRate = speed;
+  audio.playbackRate = speed;
+  audio.preservesPitch = true;
+}
 // Resolves the generator's "wait for room" pause. Set only while the generator waits.
 let wakeGeneration: (() => void) | undefined;
 
@@ -121,22 +152,62 @@ function currentSegment(): Segment | undefined {
 }
 let wakeLock: WakeLockSentinel | undefined;
 
-const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+function createWorker(): Worker {
+  const created = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  created.addEventListener("message", (event: MessageEvent<WorkerEvent>) => {
+    if (created !== worker) return;
+    const data = event.data;
+    if (data.type === "log") log(data.text);
+    onWorkerEvent(data);
+  });
+  created.addEventListener("error", (event) => {
+    if (created !== worker) return;
+    log(`worker error: ${event.message}`);
+    failWorker(new Error(`Worker error: ${event.message || "unknown"}`));
+  });
+  created.addEventListener("messageerror", () => {
+    if (created !== worker) return;
+    log("worker messageerror");
+    failWorker(new Error("Worker message could not be read."));
+  });
+  return created;
+}
+
+let worker = createWorker();
 let workerReady = false;
+// The voice the worker session holds. Undefined until the first init succeeds.
+let workerVoiceId: string | undefined;
+// True once the worker received an init request. A used worker is replaced, never re-initialised.
+let workerUsed = false;
 let onWorkerEvent: (event: WorkerEvent) => void = () => {};
+// Rejects the worker wait in flight (init or clip). Set only while a wait is pending.
+let rejectPending: ((error: Error) => void) | undefined;
+// True while an init request waits for "ready".
+let initPending = false;
+/** Longest wait for a voice init. A model download on a slow phone can take long. */
+const INIT_TIMEOUT_MS = 120_000;
+
+/**
+ * Throw the worker away and create a fresh one. The old worker is terminated, and its late
+ * messages are ignored because the listeners compare against the current `worker`.
+ */
+function resetWorker(): void {
+  worker.terminate();
+  worker = createWorker();
+  workerReady = false;
+  workerVoiceId = undefined;
+  workerUsed = false;
+}
+
+/** A worker crash or unreadable message. Resets the worker and settles the pending wait. */
+function failWorker(error: Error): void {
+  resetWorker();
+  rejectPending?.(error);
+}
 
 function post(request: WorkerRequest): void {
   worker.postMessage(request);
 }
-
-worker.addEventListener("message", (event: MessageEvent<WorkerEvent>) => {
-  const data = event.data;
-  if (data.type === "log") log(data.text);
-  onWorkerEvent(data);
-});
-worker.addEventListener("error", (event) => {
-  log(`worker error: ${event.message}`);
-});
 
 // ---------------------------------------------------------------- saved position
 
@@ -151,14 +222,13 @@ function refreshSavedUi(): void {
   const saved = loadPosition();
   if (!saved) {
     savedElement.textContent = "No saved position.";
-    resumeButton.disabled = true;
-    return;
+  } else {
+    const matches = openedBook?.id === saved.bookId;
+    savedElement.textContent = `${describePosition(saved)} ${
+      matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
+    }`;
   }
-  const matches = openedBook?.id === saved.bookId;
-  savedElement.textContent = `${describePosition(saved)} ${
-    matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
-  }`;
-  resumeButton.disabled = !matches || generating;
+  updateControls();
 }
 
 function persistPosition(reason: string): void {
@@ -330,6 +400,7 @@ async function recoverPlayback(attempt: number, token: number): Promise<void> {
     recoveryCausedPause = true;
     setTimeout(() => (recoveryCausedPause = false), PAUSE_IGNORE_MS);
     audio.src = newUrl;
+    applyPlaybackRate();
     URL.revokeObjectURL(oldUrl);
     audio.load();
     log("recovery: load() called, waiting for metadata");
@@ -625,6 +696,7 @@ function switchSegment(segmentIndex: number, offset: number, play: boolean, reas
   buffering = false;
   ignoreSourceChangePause();
   audio.src = url;
+  applyPlaybackRate();
   if (offset > 0) audio.currentTime = offset;
   lastPositionState = 0;
   if (play) {
@@ -724,12 +796,32 @@ async function releaseWakeLock(): Promise<void> {
   wakeLock = undefined;
 }
 
-function waitForEvent(type: WorkerEvent["type"]): Promise<WorkerEvent> {
+function waitForEvent(type: WorkerEvent["type"], timeoutMs?: number): Promise<WorkerEvent> {
   return new Promise((resolve, reject) => {
+    let timer: number | undefined;
+    const finish = (): void => {
+      window.clearTimeout(timer);
+      onWorkerEvent = () => {};
+      rejectPending = undefined;
+    };
+    rejectPending = (error) => {
+      finish();
+      reject(error);
+    };
+    if (timeoutMs !== undefined) {
+      timer = window.setTimeout(() => {
+        log(`worker wait for "${type}" timed out after ${timeoutMs / 1000} s`);
+        rejectPending?.(new Error(`Timed out after ${timeoutMs / 1000} s while loading the voice.`));
+      }, timeoutMs);
+    }
     onWorkerEvent = (event) => {
-      if (event.type === type) resolve(event);
-      else if (event.type === "error") reject(new Error(event.message));
-      else if (event.type === "model-progress") {
+      if (event.type === type) {
+        finish();
+        resolve(event);
+      } else if (event.type === "error") {
+        finish();
+        reject(new Error(event.message));
+      } else if (event.type === "model-progress") {
         const percent = Math.round((event.loaded * 100) / event.total);
         statsElement.textContent = `Downloading voice model: ${percent}%`;
       }
@@ -737,18 +829,48 @@ function waitForEvent(type: WorkerEvent["type"]): Promise<WorkerEvent> {
   });
 }
 
-async function ensureWorker(): Promise<void> {
-  if (workerReady) return;
+/**
+ * Make the worker hold a session for `voiceId`. The library keeps one global session per worker and
+ * ignores a new voice id, so a voice change replaces the whole worker. Terminating the old worker
+ * releases its model and WASM memory. Runs inside the worker queue, so no clip request is in flight.
+ */
+function ensureWorker(voiceId: string): Promise<void> {
+  const run = workerQueue.then(() => initWorker(voiceId));
+  workerQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function initWorker(voiceId: string): Promise<void> {
+  if (workerReady && workerVoiceId === voiceId) return;
+  if (workerUsed) {
+    log(`replacing worker session (${workerVoiceId ?? "failed init"} -> ${voiceId})`);
+    resetWorker();
+  }
+  workerUsed = true;
+  workerReady = false;
+  workerVoiceId = undefined;
   statsElement.textContent = "Loading voice model and WASM...";
-  const ready = waitForEvent("ready");
+  const ready = waitForEvent("ready", INIT_TIMEOUT_MS);
+  initPending = true;
   post({
     type: "init",
-    voiceId: voiceInput.value.trim(),
+    voiceId,
     baseUrl: new URL(import.meta.env.BASE_URL, location.origin).href,
   });
-  const event = await ready;
+  let event: WorkerEvent;
+  try {
+    event = await ready;
+  } catch (error) {
+    // Init failed, timed out or was cancelled. Drop the worker unless it was already reset.
+    if (workerUsed) resetWorker();
+    throw error;
+  } finally {
+    initPending = false;
+  }
   workerReady = true;
-  if (event.type === "ready") log(`model ready in ${(event.initMs / 1000).toFixed(1)} s`);
+  workerVoiceId = voiceId;
+  if (event.type === "ready") log(`model ${voiceId} ready in ${(event.initMs / 1000).toFixed(1)} s`);
+  refreshVoiceStatus();
 }
 
 interface GeneratedClip {
@@ -761,9 +883,24 @@ interface GeneratedClip {
 // interleave per sentence this way and never overlap in the worker.
 let workerQueue: Promise<unknown> = Promise.resolve();
 
-/** Generate one sentence. One sentence per worker request lets the page pause between sentences. */
-function generateClip(text: string): Promise<GeneratedClip> {
-  const run = workerQueue.then(() => requestClip(text));
+/** Thrown when the worker holds another voice than the request expects. */
+class VoiceChangedError extends Error {
+  constructor(expected: string, actual: string | undefined) {
+    super(`Worker voice changed (expected ${expected}, worker has ${actual ?? "none"}).`);
+    this.name = "VoiceChangedError";
+  }
+}
+
+/**
+ * Generate one sentence. One sentence per worker request lets the page pause between sentences.
+ * The request carries the voice it expects. It fails without sending anything when the worker
+ * holds another voice, so a clip is never made with the wrong voice.
+ */
+function generateClip(text: string, voiceId: string): Promise<GeneratedClip> {
+  const run = workerQueue.then(() => {
+    if (!workerReady || workerVoiceId !== voiceId) throw new VoiceChangedError(voiceId, workerVoiceId);
+    return requestClip(text);
+  });
   workerQueue = run.catch(() => undefined);
   return run;
 }
@@ -771,15 +908,26 @@ function generateClip(text: string): Promise<GeneratedClip> {
 function requestClip(text: string): Promise<GeneratedClip> {
   return new Promise((resolve, reject) => {
     let result: GeneratedClip | undefined;
+    const finish = (): void => {
+      onWorkerEvent = () => {};
+      rejectPending = undefined;
+    };
+    rejectPending = (error) => {
+      finish();
+      reject(error);
+    };
     onWorkerEvent = (event) => {
       if (event.type === "clip") {
         result = { clip: { sampleRate: event.sampleRate, pcm: event.pcm }, genMs: event.genMs };
       } else if (event.type === "done") {
+        finish();
         if (result) resolve(result);
         else reject(new Error("Worker finished without a clip."));
       } else if (event.type === "cancelled") {
+        finish();
         reject(new Error("Generation cancelled."));
       } else if (event.type === "error") {
+        finish();
         reject(new Error(event.message));
       }
     };
@@ -815,13 +963,22 @@ function regenerateSegment(
       return regenerateSegment(active, segmentIndex, token, epoch);
     });
   }
-  const obsolete = (): boolean => loaded !== active || token !== loadToken || epoch !== cancelEpoch;
+  const obsolete = (): boolean =>
+    loaded !== active ||
+    token !== loadToken ||
+    epoch !== cancelEpoch ||
+    (generating && active.voiceId !== generationVoiceId);
+  if (generating && active.voiceId !== generationVoiceId) {
+    // The generator is about to switch the worker to another voice. Do not switch it back.
+    log(`segment ${segmentIndex + 1} regeneration skipped: a generation with another voice is starting`);
+    return Promise.resolve(false);
+  }
   const task = (async (): Promise<boolean> => {
     log(`segment ${segmentIndex + 1} regenerating`);
     statsElement.textContent = `Regenerating segment ${segmentIndex + 1}...`;
     const startedAt = performance.now();
     try {
-      await ensureWorker();
+      await ensureWorker(active.voiceId);
       const clips: Clip[] = [];
       const gaps: number[] = [];
       for (let i = segment.startSentence; i < segment.startSentence + segment.count; i += 1) {
@@ -831,7 +988,7 @@ function regenerateSegment(
         }
         const sentence = active.sentences[i];
         if (!sentence) throw new Error(`Sentence ${i + 1} is missing.`);
-        const { clip } = await generateClip(sentence.text);
+        const { clip } = await generateClip(sentence.text, active.voiceId);
         clips.push(clip);
         gaps.push(sentence.paragraphEnd ? PARAGRAPH_GAP_MS : SENTENCE_GAP_MS);
       }
@@ -847,6 +1004,10 @@ function regenerateSegment(
       statsElement.textContent = `Segment ${segmentIndex + 1} regenerated.`;
       return true;
     } catch (error) {
+      if (error instanceof VoiceChangedError) {
+        log(`segment ${segmentIndex + 1} regeneration abandoned: ${error.message}`);
+        return false;
+      }
       log(`segment ${segmentIndex + 1} regeneration failed: ${errorName(error)}`);
       statsElement.textContent = `Regeneration failed: ${errorName(error)}`;
       return false;
@@ -882,11 +1043,12 @@ function onSegmentReady(segments: Segment[], chapterIndex: number, sentences: Se
   if (index === 0) {
     if (loaded) URL.revokeObjectURL(loaded.url);
     const url = URL.createObjectURL(segment.blob);
-    loaded = { chapterIndex, sentences, segments, current: 0, url };
+    loaded = { chapterIndex, voiceId: generationVoiceId, sentences, segments, current: 0, url };
     currentSentence = -1;
     buffering = false;
     ignoreSourceChangePause();
     audio.src = url;
+    applyPlaybackRate();
     renderText(sentences);
     setMetadata(openedBook.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
     highlight(segment.startSentence);
@@ -927,7 +1089,7 @@ async function generateSegments(
     while (next < sentences.length && seconds < SEGMENT_TARGET_S) {
       const sentence = sentences[next];
       if (!sentence) break;
-      const { clip, genMs } = await generateClip(sentence.text);
+      const { clip, genMs } = await generateClip(sentence.text, generationVoiceId);
       throwIfCancelled();
       const gapMs = sentence.paragraphEnd ? PARAGRAPH_GAP_MS : SENTENCE_GAP_MS;
       clips.push(clip);
@@ -967,13 +1129,12 @@ async function generateChapter(chapterIndex: number, startSentence = 0): Promise
   if (!openedBook || generating) return;
   generating = true;
   cancelRequested = false;
-  generateButton.disabled = true;
-  resumeButton.disabled = true;
-  cancelButton.disabled = false;
+  generationVoiceId = selectedVoiceId();
+  updateControls();
   audio.pause();
   try {
     await acquireWakeLock();
-    await ensureWorker();
+    await ensureWorker(generationVoiceId);
     const paragraphs = await chapterParagraphs(openedBook, chapterIndex);
     const sentences = splitSentences(paragraphs, openedBook.language);
     if (sentences.length === 0) {
@@ -1001,11 +1162,179 @@ async function generateChapter(chapterIndex: number, startSentence = 0): Promise
       buffering = false;
       log("generation ended while buffering. Playback stays stopped.");
     }
-    generateButton.disabled = !openedBook;
-    cancelButton.disabled = true;
     refreshSavedUi();
   }
 }
+
+// ---------------------------------------------------------------- voice and speed settings
+
+function selectedVoiceId(): string {
+  return findVoice(voiceSelect.value)?.id ?? DEFAULT_VOICE_ID;
+}
+
+function persistSettings(): void {
+  saveSettings({ voiceId: selectedVoiceId(), speed });
+}
+
+function clampSpeed(value: number): number {
+  return Math.min(Math.max(value, SPEED_MIN), SPEED_MAX);
+}
+
+function showSpeed(): void {
+  speedInput.value = String(speed);
+  speedLabel.textContent = `${speed.toFixed(2)}x`;
+}
+
+function setSpeed(value: number, reason: string): void {
+  speed = Math.round(clampSpeed(value) * 100) / 100;
+  applyPlaybackRate();
+  showSpeed();
+  persistSettings();
+  log(`speed set to ${speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
+}
+
+speedInput.addEventListener("input", () => {
+  const value = Number(speedInput.value);
+  if (Number.isFinite(value)) speedLabel.textContent = `${clampSpeed(value).toFixed(2)}x`;
+});
+speedInput.addEventListener("change", () => {
+  const value = Number(speedInput.value);
+  if (Number.isFinite(value)) setSpeed(value, "slider");
+});
+speedResetButton.addEventListener("click", () => setSpeed(1, "reset"));
+audio.addEventListener("ratechange", () => {
+  lastPositionState = 0;
+  updatePositionState();
+});
+
+// (voice state variables are declared with the other state at the top)
+
+function updateControls(): void {
+  const locked = generating || voiceBusy;
+  generateButton.disabled = locked || !openedBook;
+  cancelButton.disabled = !generating;
+  const saved = loadPosition();
+  resumeButton.disabled = locked || !saved || openedBook?.id !== saved.bookId;
+  voiceSelect.disabled = locked;
+  voiceDownloadButton.disabled = locked || voiceStored !== false;
+  voiceRemoveButton.disabled = locked || voiceStored !== true;
+  if (voiceBusy) {
+    voiceStatus.textContent = voiceMessage;
+  } else if (voiceStored === undefined) {
+    voiceStatus.textContent = "Status unknown";
+  } else if (voiceStored) {
+    voiceStatus.textContent = "Downloaded";
+  } else {
+    const size = findVoice(selectedVoiceId())?.sizeMb ?? 61;
+    voiceStatus.textContent = `Not downloaded (about ${Math.round(size)} MB)`;
+  }
+}
+
+async function readStoredVoices(): Promise<string[] | undefined> {
+  try {
+    return await stored();
+  } catch (error) {
+    log(`voice storage unavailable: ${errorName(error)}`);
+    return undefined;
+  }
+}
+
+async function refreshVoiceStatus(): Promise<void> {
+  const token = ++voiceStatusToken;
+  const id = selectedVoiceId();
+  const list = await readStoredVoices();
+  if (token !== voiceStatusToken) return;
+  voiceStored = list ? list.includes(id) : undefined;
+  updateControls();
+}
+
+/** The library does not wait for its file write, so poll a few times after a download. */
+async function waitUntilStored(id: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const list = await readStoredVoices();
+    if (!list) return false;
+    if (list.includes(id)) return true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+voiceSelect.addEventListener("change", () => {
+  const id = selectedVoiceId();
+  persistSettings();
+  log(`voice selected: ${id}. The worker switches before the next generation.`);
+  voiceStored = undefined;
+  void refreshVoiceStatus();
+});
+
+voiceDownloadButton.addEventListener("click", () => {
+  if (generating || voiceBusy) return;
+  const id = selectedVoiceId();
+  voiceBusy = true;
+  voiceMessage = "Downloading 0%";
+  updateControls();
+  log(`voice download started: ${id}`);
+  void (async () => {
+    try {
+      await download(id, (progress) => {
+        if (progress.total <= 0) return;
+        voiceMessage = `Downloading ${Math.round((progress.loaded * 100) / progress.total)}%`;
+        updateControls();
+      });
+      const ok = await waitUntilStored(id);
+      log(ok ? `voice download finished: ${id}` : `voice download finished but ${id} was not found in storage`);
+    } catch (error) {
+      log(`voice download failed: ${errorName(error)}`);
+    } finally {
+      voiceBusy = false;
+      updateControls();
+      await refreshVoiceStatus();
+    }
+  })();
+});
+
+voiceRemoveButton.addEventListener("click", () => {
+  if (generating || voiceBusy) return;
+  const id = selectedVoiceId();
+  voiceBusy = true;
+  voiceMessage = "Removing...";
+  updateControls();
+  log(`voice remove started: ${id}`);
+  void (async () => {
+    try {
+      await remove(id);
+      log(`voice removed: ${id}`);
+    } catch (error) {
+      log(`voice remove failed: ${errorName(error)}`);
+    } finally {
+      voiceBusy = false;
+      updateControls();
+      await refreshVoiceStatus();
+    }
+  })();
+});
+
+function initSettings(): void {
+  voiceSelect.replaceChildren(...VOICES.map((voice) => new Option(voice.label, voice.id)));
+  const saved = loadSettings();
+  let voiceId = DEFAULT_VOICE_ID;
+  if (saved) {
+    if (findVoice(saved.voiceId)) {
+      voiceId = saved.voiceId;
+    } else {
+      log(`saved voice ${saved.voiceId} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
+    }
+    speed = Math.round(clampSpeed(saved.speed) * 100) / 100;
+  }
+  voiceSelect.value = voiceId;
+  applyPlaybackRate();
+  showSpeed();
+  persistSettings();
+  log(`settings: voice=${voiceId} speed=${speed.toFixed(2)}x`);
+  updateControls();
+  void refreshVoiceStatus();
+}
+initSettings();
 
 // ---------------------------------------------------------------- UI wiring
 
@@ -1021,7 +1350,6 @@ fileInput.addEventListener("change", () => {
         ...opened.chapters.map((c) => new Option(c.label, String(c.index))),
       );
       chapterSelect.disabled = false;
-      generateButton.disabled = false;
       log(`opened "${opened.title}" with ${opened.chapters.length} spine items`);
       refreshSavedUi();
     })
@@ -1032,22 +1360,29 @@ fileInput.addEventListener("change", () => {
 });
 
 generateButton.addEventListener("click", () => {
+  if (voiceBusy) return;
   void generateChapter(Number(chapterSelect.value));
 });
 
 cancelButton.addEventListener("click", () => {
   cancelRequested = true;
   cancelEpoch += 1;
-  post({ type: "cancel" });
+  if (initPending) {
+    // No generate request is running. Terminate the worker so the init wait settles.
+    log("cancel during voice init: terminating the worker");
+    failWorker(new Error("Generation cancelled."));
+  } else {
+    post({ type: "cancel" });
+  }
   wakeGeneration?.();
   log("cancel requested");
 });
 
 resumeButton.addEventListener("click", () => {
   const saved = loadPosition();
-  if (!saved || openedBook?.id !== saved.bookId) return;
+  if (!saved || openedBook?.id !== saved.bookId || voiceBusy) return;
   chapterSelect.value = String(saved.chapterIndex);
-  log(`resuming at sentence ${saved.sentenceIndex + 1}: generating from that sentence`);
+  log(`resuming at sentence ${saved.sentenceIndex + 1} with voice ${selectedVoiceId()}: generating from that sentence`);
   void generateChapter(saved.chapterIndex, saved.sentenceIndex);
 });
 

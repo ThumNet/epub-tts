@@ -37,7 +37,7 @@ The build copies `piper_phonemize.wasm` and `piper_phonemize.data` from this pac
 
 The app loads Piper voices from the Hugging Face repository `diffusionstudio/piper-voices`. This repository mirrors `rhasspy/piper-voices`. The app downloads the voice files at run time. The repository does not contain them.
 
-Planned voices (the voice picker arrives in a later phase):
+The voice picker offers these voices:
 
 - en_US-kristin-medium
 - en_US-norman-medium

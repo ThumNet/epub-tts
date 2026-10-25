@@ -7,7 +7,8 @@ A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It run
 1. Open https://thumnet.github.io/epub-tts/ on your phone.
 2. Optional on iPhone: add the app to the home screen. Open the page in Safari, tap Share, then tap "Add to Home Screen".
 3. Pick an EPUB file. Pick a chapter. Press "Generate chapter audio". Playback starts after the first segment.
-4. The "Voice" field holds the name of a Piper voice. Leave the default `en_US-kristin-medium`. A voice picker comes in a later phase.
+4. Pick a voice in the "Voice" list. The default is Kristin. The page shows whether the voice is downloaded. Use "Download" to fetch it ahead of time (about 61 MB) or "Remove" to free the space. The first generation downloads the voice by itself if needed.
+5. Use the "Speed" slider (0.75x to 2x) to change the playback speed. "Reset to 1x" returns to normal speed. The app remembers your voice and speed.
 
 Known limit: on iOS, after a pause of about 3 to 6 seconds, resume from the lock screen stops working. It works again after you bring the app to the foreground. This comes from the owner's own phone log. We did not verify it on other devices.
 
