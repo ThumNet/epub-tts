@@ -77,3 +77,36 @@ A search of `dist/` for `segmentSeconds`, `EPUB_TTS_MOCK_WORKER` and `worker.moc
 The `import.meta.env.VITE_E2E` test stays in `main.ts`. If it moved into the engine as a parameter, `segmentSeconds` would ship in production.
 
 Line counts: `src/main.ts` 1959 (was 1989), `src/engine/config.ts` 38, `src/engine/pure.ts` 124.
+
+## Step 2 result
+
+Step 2 adds `src/engine/hooks.ts` (`EngineHooks`, types only) and one `hooks` object in `main.ts`, defined right after the DOM lookups (before the first `refreshSavedUi()` at module load). Every hook is synchronous and replaces the old code in place.
+
+| Hook | Call sites converted | Remaining direct uses |
+|---|---|---|
+| `setStatus` | 15 (before: 15 direct writes) | 1 (hook body) |
+| `notifyChange` | 24 (before: 25 `updateControls()` calls) | 1 (hook body) |
+| `showChapter` | 7 | 1 (hook body) |
+| `renderChapter` | 2 | 0 (hook body calls `renderText`) |
+| `highlight` | 1 (DOM part of `highlight()`) | 0 |
+| `clearText` | 2 | 0 |
+| `getSelectedChapter` | 3 (`navigationBase`, Generate click, chapter `change` handler) | 1 (hook body) |
+
+The `highlight()` function keeps the guard and `currentSentence = index`. The hook now removes `.current` after that assignment instead of before it. Nothing reads `currentSentence` in between, so there is no observable difference.
+
+DOM touches left in engine-destined code (no hook fits, so left as is):
+- `src/main.ts` `showBook`: `chapterSelect.replaceChildren(...)` and `chapterSelect.disabled = false` (chapter list fill).
+- `src/main.ts` forget handler: `chapterSelect.replaceChildren()` and `chapterSelect.disabled = true`.
+- `src/main.ts` `renderText` body, which is the shell render function behind `renderChapter`.
+- Shell, by design: `bookInfo`, `voiceStatus`, `speedLabel`, `savedElement`, `copyStatus`, `versionElement`, `fileInput`, button flags, listener registrations.
+
+Results: `npm run typecheck` OK (`boundaries OK: 14 files, 16 imports, 0 cycles, 3 engine files checked`), `npm test` 82 passed, `npm run test:e2e` 14 passed (12.6 s).
+
+| File in `dist/assets` | Size (vite, kB) | Step 1 |
+|---|---|---|
+| `index-C78aMtyl.js` | 407.25 | 406.70 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. `index` grew about 0.55 kB (hook object and arrow wrappers).

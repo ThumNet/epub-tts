@@ -44,6 +44,7 @@ import {
   sentenceIn,
 } from "./engine/pure";
 import type { Clip, Timing } from "./wav";
+import type { EngineHooks } from "./engine/hooks";
 
 /** Target audio length of one segment. A segment closes once clips and gaps reach this. */
 // The e2e check stays here so the build-time define removes the override code from production bundles.
@@ -82,6 +83,30 @@ const statsElement = byId("stats", HTMLDivElement);
 const savedElement = byId("saved", HTMLDivElement);
 const textElement = byId("text", HTMLDivElement);
 const audio = byId("audio", HTMLAudioElement);
+
+// Engine-side DOM access goes through these synchronous hooks. Function declarations below are hoisted.
+const hooks: EngineHooks = {
+  notifyChange: () => updateControls(),
+  setStatus: (text) => {
+    statsElement.textContent = text;
+  },
+  showChapter: (index) => {
+    chapterSelect.value = String(index);
+  },
+  renderChapter: (sentences) => renderText(sentences),
+  highlight: (index) => {
+    textElement.querySelector(".current")?.classList.remove("current");
+    const span = textElement.querySelector(`span[data-index="${index}"]`);
+    if (span) {
+      span.classList.add("current");
+      span.scrollIntoView({ block: "nearest" });
+    }
+  },
+  clearText: () => {
+    textElement.replaceChildren();
+  },
+  getSelectedChapter: () => Number(chapterSelect.value),
+};
 
 // ---------------------------------------------------------------- environment
 
@@ -277,7 +302,7 @@ function refreshSavedUi(): void {
       matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
     }`;
   }
-  updateControls();
+  hooks.notifyChange();
 }
 
 function persistPosition(reason: string): void {
@@ -665,13 +690,8 @@ function sentenceAt(seconds: number): number {
 
 function highlight(index: number): void {
   if (index === currentSentence) return;
-  textElement.querySelector(".current")?.classList.remove("current");
   currentSentence = index;
-  const span = textElement.querySelector(`span[data-index="${index}"]`);
-  if (span) {
-    span.classList.add("current");
-    span.scrollIntoView({ block: "nearest" });
-  }
+  hooks.highlight(index);
 }
 
 audio.addEventListener("timeupdate", () => {
@@ -820,14 +840,14 @@ function switchToPendingChapter(play: boolean, reason: string): void {
     // Release the old chapter's audio. Its late regenerations see `loaded !== active` and stop.
     for (const segment of old.segments) segment.blob = undefined;
   }
-  chapterSelect.value = String(run.chapterIndex);
-  renderText(run.sentences);
+  hooks.showChapter(run.chapterIndex);
+  hooks.renderChapter(run.sentences);
   setMetadata(openedBook.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
   highlight(first.startSentence);
   persistPosition("chapter swap");
   dropFarSegments();
   wakeGeneration?.();
-  updateControls();
+  hooks.notifyChange();
   log(`swap to chapter ${run.chapterIndex + 1} (${reason})`);
 }
 
@@ -847,7 +867,7 @@ audio.addEventListener("ended", () => {
     buffering = true;
     const waitingFor = pendingChapter ? `the first segment of chapter ${pendingChapter.chapterIndex + 1}` : `segment ${nextIndex + 1}`;
     log(`buffering: ${waitingFor} is not ready yet`);
-    statsElement.textContent = `Buffering: waiting for ${waitingFor}...`;
+    hooks.setStatus(`Buffering: waiting for ${waitingFor}...`);
   } else {
     log("last segment ended");
   }
@@ -901,7 +921,7 @@ function waitForEvent(type: WorkerEvent["type"], timeoutMs?: number): Promise<Wo
         reject(new Error(event.message));
       } else if (event.type === "model-progress") {
         const percent = Math.round((event.loaded * 100) / event.total);
-        statsElement.textContent = `Downloading voice model: ${percent}%`;
+        hooks.setStatus(`Downloading voice model: ${percent}%`);
       }
     };
   });
@@ -927,7 +947,7 @@ async function initWorker(voiceId: string): Promise<void> {
   workerUsed = true;
   workerReady = false;
   workerVoiceId = undefined;
-  statsElement.textContent = "Loading voice model and WASM...";
+  hooks.setStatus("Loading voice model and WASM...");
   const ready = waitForEvent("ready", INIT_TIMEOUT_MS);
   initPending = true;
   post({
@@ -1053,7 +1073,7 @@ function regenerateSegment(
   }
   const task = (async (): Promise<boolean> => {
     log(`segment ${segmentIndex + 1} regenerating`);
-    statsElement.textContent = `Regenerating segment ${segmentIndex + 1}...`;
+    hooks.setStatus(`Regenerating segment ${segmentIndex + 1}...`);
     const startedAt = performance.now();
     try {
       await ensureWorker(active.voiceId);
@@ -1079,7 +1099,7 @@ function regenerateSegment(
       segment.timings = joined.timings;
       segment.duration = joined.duration;
       log(`segment ${segmentIndex + 1} regenerated in ${((performance.now() - startedAt) / 1000).toFixed(1)} s`);
-      statsElement.textContent = `Segment ${segmentIndex + 1} regenerated.`;
+      hooks.setStatus(`Segment ${segmentIndex + 1} regenerated.`);
       return true;
     } catch (error) {
       if (error instanceof VoiceChangedError) {
@@ -1087,7 +1107,7 @@ function regenerateSegment(
         return false;
       }
       log(`segment ${segmentIndex + 1} regeneration failed: ${errorName(error)}`);
-      statsElement.textContent = `Regeneration failed: ${errorName(error)}`;
+      hooks.setStatus(`Regeneration failed: ${errorName(error)}`);
       return false;
     } finally {
       regenerations.delete(segment);
@@ -1161,11 +1181,11 @@ function onSegmentReady(run: ChapterRun): void {
     ignoreSourceChangePause();
     audio.src = url;
     applyPlaybackRate();
-    chapterSelect.value = String(chapterIndex);
-    renderText(sentences);
+    hooks.showChapter(chapterIndex);
+    hooks.renderChapter(sentences);
     setMetadata(openedBook.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
     highlight(segment.startSentence);
-    updateControls();
+    hooks.notifyChange();
     log("segment 1 started");
     const startedAt = Date.now();
     const promise = audio.play();
@@ -1208,9 +1228,10 @@ async function generateSegments(run: ChapterRun, startSentence: number): Promise
       seconds += clip.pcm.length / clip.sampleRate + gapMs / 1000;
       totalGenMs += genMs;
       next += 1;
-      statsElement.textContent =
+      hooks.setStatus(
         `Chapter ${chapterIndex + 1}, segment ${segments.length + 1}: sentence ${next}/${sentences.length}. ` +
-        `Generated ${(totalGenMs / 1000).toFixed(1)} s for ${(totalAudioS + seconds).toFixed(1)} s of audio.`;
+        `Generated ${(totalGenMs / 1000).toFixed(1)} s for ${(totalAudioS + seconds).toFixed(1)} s of audio.`,
+      );
       setGenerationMarker({ chapterIndex, done: next, total: sentences.length, at: Date.now() });
     }
     const chapter = joinClips(clips, gaps);
@@ -1232,7 +1253,7 @@ async function generateSegments(run: ChapterRun, startSentence: number): Promise
   const summary =
     `Chapter ${chapterIndex + 1} generation done. ${segments.length} segments, audio ${totalAudioS.toFixed(1)} s, ` +
     `generation ${(totalGenMs / 1000).toFixed(1)} s, RTF ${(totalGenMs / 1000 / Math.max(totalAudioS, 1)).toFixed(2)}.`;
-  statsElement.textContent = summary;
+  hooks.setStatus(summary);
   log(summary);
 }
 
@@ -1241,7 +1262,7 @@ async function chapterSentences(book: OpenBook, index: number): Promise<Sentence
   const sentences = splitSentences(await chapterParagraphs(book, index), book.language);
   if (book === openedBook) {
     chapterHasText[index] = sentences.length > 0;
-    updateControls();
+    hooks.notifyChange();
   }
   return sentences;
 }
@@ -1273,14 +1294,14 @@ async function runGeneration(chapterIndex: number, startSentence: number, prepar
   generatingChapterIndex = chapterIndex;
   awaitingFirstSegment = true;
   generationVoiceId = selectedVoiceId();
-  updateControls();
+  hooks.notifyChange();
   audio.pause();
   try {
     await acquireWakeLock();
     await ensureWorker(generationVoiceId);
     const sentences = preparsed ?? (await chapterSentences(book, chapterIndex));
     if (sentences.length === 0) {
-      statsElement.textContent = "This chapter has no text. Pick another chapter.";
+      hooks.setStatus("This chapter has no text. Pick another chapter.");
       return;
     }
     const start = startSentence < sentences.length ? Math.max(startSentence, 0) : 0;
@@ -1299,7 +1320,7 @@ async function runGeneration(chapterIndex: number, startSentence: number, prepar
       throwIfCancelled();
       if (!next || book !== openedBook) {
         log("end of book");
-        statsElement.textContent = "End of book. Generation done.";
+        hooks.setStatus("End of book. Generation done.");
         break;
       }
       const nextRun: ChapterRun = {
@@ -1316,7 +1337,7 @@ async function runGeneration(chapterIndex: number, startSentence: number, prepar
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    statsElement.textContent = `Stopped: ${message}`;
+    hooks.setStatus(`Stopped: ${message}`);
     log(`generation stopped: ${message}`);
   } finally {
     setGenerationMarker(undefined);
@@ -1379,12 +1400,12 @@ async function runNavigation(
     return;
   }
   navigating = true;
-  updateControls();
+  hooks.notifyChange();
   try {
     const target = await find(book);
     if (book !== openedBook) return;
     if (!target) {
-      statsElement.textContent = noTarget;
+      hooks.setStatus(noTarget);
       log(noTarget);
       showPlayingChapter();
       return;
@@ -1398,15 +1419,15 @@ async function runNavigation(
       showPlayingChapter();
       return;
     }
-    chapterSelect.value = String(target.chapterIndex);
+    hooks.showChapter(target.chapterIndex);
     void generateChapter(target.chapterIndex, 0, target.sentences);
   } catch (error) {
-    statsElement.textContent = `Could not change the chapter: ${errorName(error)}`;
+    hooks.setStatus(`Could not change the chapter: ${errorName(error)}`);
     log(`chapter change failed (${source}): ${errorName(error)}`);
     showPlayingChapter();
   } finally {
     navigating = false;
-    updateControls();
+    hooks.notifyChange();
   }
 }
 
@@ -1424,24 +1445,24 @@ async function jumpToSentence(sentenceIndex: number): Promise<void> {
   }
   if (sentenceIndex < 0 || sentenceIndex >= chapter.sentences.length) return;
   navigating = true;
-  updateControls();
+  hooks.notifyChange();
   try {
     log(`jump: restarting generation at sentence ${sentenceIndex + 1}`);
-    statsElement.textContent = `Jumping to sentence ${sentenceIndex + 1}...`;
+    hooks.setStatus(`Jumping to sentence ${sentenceIndex + 1}...`);
     if (generating) {
       cancelGeneration();
       await activeGeneration;
     }
     if (generating || book !== openedBook) return;
     wantPlaying = true;
-    chapterSelect.value = String(chapter.chapterIndex);
+    hooks.showChapter(chapter.chapterIndex);
     void generateChapter(chapter.chapterIndex, sentenceIndex, chapter.sentences);
   } catch (error) {
-    statsElement.textContent = `Could not jump to the sentence: ${errorName(error)}`;
+    hooks.setStatus(`Could not jump to the sentence: ${errorName(error)}`);
     log(`jump failed: ${errorName(error)}`);
   } finally {
     navigating = false;
-    updateControls();
+    hooks.notifyChange();
   }
 }
 
@@ -1522,13 +1543,13 @@ function playingChapterIndex(): number | undefined {
 
 /** The chapter Previous/Next move from: the playing chapter, else the select value. */
 function navigationBase(): number {
-  return playingChapterIndex() ?? Number(chapterSelect.value);
+  return playingChapterIndex() ?? hooks.getSelectedChapter();
 }
 
 /** Show the playing chapter in the select. Call after every swap, fresh start and navigation. */
 function showPlayingChapter(): void {
   const index = playingChapterIndex();
-  if (index !== undefined) chapterSelect.value = String(index);
+  if (index !== undefined) hooks.showChapter(index);
 }
 
 /**
@@ -1585,7 +1606,7 @@ async function refreshVoiceStatus(): Promise<void> {
   const list = await readStoredVoices();
   if (token !== voiceStatusToken) return;
   voiceStored = list ? list.includes(id) : undefined;
-  updateControls();
+  hooks.notifyChange();
 }
 
 /** The library does not wait for its file write, so poll a few times after a download. */
@@ -1614,14 +1635,14 @@ voiceDownloadButton.addEventListener("click", () => {
   voiceBusy = true;
   voiceError = "";
   voiceMessage = "Downloading 0%";
-  updateControls();
+  hooks.notifyChange();
   log(`voice download started: ${id}`);
   void (async () => {
     try {
       await download(id, (progress) => {
         if (progress.total <= 0) return;
         voiceMessage = `Downloading ${Math.round((progress.loaded * 100) / progress.total)}%`;
-        updateControls();
+        hooks.notifyChange();
       });
       const ok = await waitUntilStored(id);
       log(ok ? `voice download finished: ${id}` : `voice download finished but ${id} was not found in storage`);
@@ -1629,7 +1650,7 @@ voiceDownloadButton.addEventListener("click", () => {
       log(`voice download failed: ${errorName(error)}`);
     } finally {
       voiceBusy = false;
-      updateControls();
+      hooks.notifyChange();
       await refreshVoiceStatus();
     }
   })();
@@ -1641,7 +1662,7 @@ voiceRemoveButton.addEventListener("click", () => {
   voiceBusy = true;
   voiceError = "";
   voiceMessage = "Removing...";
-  updateControls();
+  hooks.notifyChange();
   log(`voice remove started: ${id}`);
   void (async () => {
     try {
@@ -1659,7 +1680,7 @@ voiceRemoveButton.addEventListener("click", () => {
       log(`voice remove failed: ${errorName(error)}`);
     } finally {
       voiceBusy = false;
-      updateControls();
+      hooks.notifyChange();
       await refreshVoiceStatus();
     }
   })();
@@ -1682,7 +1703,7 @@ function initSettings(): void {
   showSpeed();
   persistSettings();
   log(`settings: voice=${voiceId} speed=${speed.toFixed(2)}x`);
-  updateControls();
+  hooks.notifyChange();
   void refreshVoiceStatus();
 }
 initSettings();
@@ -1709,7 +1730,7 @@ function unloadChapter(): void {
   audio.load();
   URL.revokeObjectURL(loaded.url);
   loaded = undefined;
-  textElement.replaceChildren();
+  hooks.clearText();
   currentSentence = -1;
 }
 
@@ -1735,7 +1756,7 @@ async function showBook(opened: OpenBook, token: number, note: string): Promise<
   // Preselect the saved chapter when this is the saved book. Nothing starts by itself.
   const savedPosition = loadPosition();
   if (savedPosition?.bookId === opened.id && opened.chapters[savedPosition.chapterIndex]) {
-    chapterSelect.value = String(savedPosition.chapterIndex);
+    hooks.showChapter(savedPosition.chapterIndex);
     log(`restored saved chapter ${savedPosition.chapterIndex + 1}`);
   }
   refreshSavedUi();
@@ -1765,7 +1786,7 @@ fileInput.addEventListener("change", () => {
         showBookInfo(opened, "");
         bookInfo.textContent += `. Could not remember this book on this device: ${result.reason}`;
       }
-      updateControls();
+      hooks.notifyChange();
     })
     .catch((error: unknown) => {
       if (token !== bookToken) return;
@@ -1809,18 +1830,18 @@ async function restoreBook(): Promise<void> {
   } catch (error) {
     log(`restore failed: ${errorName(error)}`);
   } finally {
-    updateControls();
+    hooks.notifyChange();
   }
 }
 
-audio.addEventListener("play", () => updateControls());
-audio.addEventListener("pause", () => updateControls());
+audio.addEventListener("play", () => hooks.notifyChange());
+audio.addEventListener("pause", () => hooks.notifyChange());
 
 forgetButton.addEventListener("click", () => {
   if (!bookRemembered || bookBusy || generating || voiceBusy || navigating || !audio.paused) return;
   const token = ++bookToken;
   bookBusy = true;
-  updateControls();
+  hooks.notifyChange();
   void (async () => {
     try {
       const ok = await forgetBook();
@@ -1841,12 +1862,12 @@ forgetButton.addEventListener("click", () => {
       chapterSelect.replaceChildren();
       chapterSelect.disabled = true;
       bookInfo.textContent = "";
-      textElement.replaceChildren();
+      hooks.clearText();
       log("book forgotten: the saved position and settings stay");
       refreshSavedUi();
     } finally {
       bookBusy = false;
-      updateControls();
+      hooks.notifyChange();
     }
   })();
 });
@@ -1864,20 +1885,20 @@ async function scanChapters(book: OpenBook): Promise<void> {
   }
   const empty = chapterHasText.filter((value) => value === false).length;
   log(`chapter scan done: ${empty} of ${book.chapters.length} spine items have no text`);
-  updateControls();
+  hooks.notifyChange();
 }
 
 chapterSelect.addEventListener("change", () => {
   // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
-  if (generating || navigating) void selectChapter(Number(chapterSelect.value));
-  else updateControls();
+  if (generating || navigating) void selectChapter(hooks.getSelectedChapter());
+  else hooks.notifyChange();
 });
 prevChapterButton.addEventListener("click", () => void navigateChapter(-1, "button"));
 nextChapterButton.addEventListener("click", () => void navigateChapter(1, "button"));
 
 generateButton.addEventListener("click", () => {
   if (voiceBusy) return;
-  void generateChapter(Number(chapterSelect.value));
+  void generateChapter(hooks.getSelectedChapter());
 });
 
 cancelButton.addEventListener("click", () => cancelGeneration());
@@ -1885,7 +1906,7 @@ cancelButton.addEventListener("click", () => cancelGeneration());
 resumeButton.addEventListener("click", () => {
   const saved = loadPosition();
   if (!saved || openedBook?.id !== saved.bookId || voiceBusy) return;
-  chapterSelect.value = String(saved.chapterIndex);
+  hooks.showChapter(saved.chapterIndex);
   log(`resuming at sentence ${saved.sentenceIndex + 1} with voice ${selectedVoiceId()}: generating from that sentence`);
   void generateChapter(saved.chapterIndex, saved.sentenceIndex);
 });
