@@ -1,6 +1,23 @@
-# EPUB TTS
+# epub-tts
 
 A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It runs on a phone and on a desktop. It has no backend.
+
+## For testers
+
+1. Open https://thumnet.github.io/epub-tts/ on your phone.
+2. Optional on iPhone: add the app to the home screen. Open the page in Safari, tap Share, then tap "Add to Home Screen".
+3. Pick an EPUB file. Pick a chapter. Press "Generate chapter audio". Playback starts after the first segment.
+4. The "Voice" field holds the name of a Piper voice. Leave the default `en_US-kristin-medium`. A voice picker comes in a later phase.
+
+Known limit: on iOS, after a pause of about 3 to 6 seconds, resume from the lock screen stops working. It works again after you bring the app to the foreground. This comes from the owner's own phone log. We did not verify it on other devices.
+
+To report a bug:
+
+1. Open "Diagnostics" at the bottom of the page. Press "Copy log".
+2. Open a new issue in this repository. Choose the "Bug report" template.
+3. Paste the log into the template.
+
+The app version shows in the footer. Licence: see `LICENSE`. Third-party licences and voice credits: see `THIRD_PARTY_NOTICES.md`.
 
 ## How it works
 
@@ -13,7 +30,7 @@ A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It run
 - If playback reaches a segment that is not ready, the app shows "Buffering" and continues when the segment is ready.
 - The app saves the reading position. After a restart, pick the same EPUB and press "Resume saved position". Generation then restarts from the saved sentence.
 - The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward and seek forward.
-- The on-screen log records diagnostics. Press "Copy log" to copy it.
+- The on-screen log records diagnostics. Open "Diagnostics" and press "Copy log" to copy it.
 
 ### Recovery from stuck resume on iOS
 
@@ -52,7 +69,7 @@ The first generation downloads the voice model (about 63 MB). The browser stores
 The repository does not contain the large files. No download script is needed.
 
 - The ONNX Runtime WASM files and the Piper phonemizer files (about 18 MB) come from npm. The build copies them from `node_modules` into `dist/ort/` and `dist/piper/`.
-- The voice model comes from Hugging Face at run time. The library hard-codes the URL: `https://huggingface.co/diffusionstudio/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx`.
+- The voice model comes from Hugging Face at run time. The library hard-codes the URL for the voice. For `en_US-lessac-medium` it is `https://huggingface.co/diffusionstudio/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx`. The default voice is now `en_US-kristin-medium`, because Lessac has a research-only licence.
 - `node_modules/` and `dist/` are in `.gitignore`.
 
 ## Deploy to GitHub Pages
@@ -72,7 +89,7 @@ Use any EPUB. The app reads the whole chapter, in segments of about one minute.
 2. Pick the EPUB file. Pick the chapter. Press "Generate chapter audio".
 3. Keep the screen on while the first segment generates. Playback then starts on its own.
 4. Follow the checklist below.
-5. Press "Copy log" after each test. Save the log with the device, browser and result.
+5. Open "Diagnostics" and press "Copy log" after each test. Save the log with the device, browser and result.
 
 Checklist (the full version is in `PLAN.md`):
 

@@ -1,11 +1,41 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
 // GitHub Pages project page. Override with VITE_BASE (for example "/" for a user page).
 const base = process.env["VITE_BASE"] ?? "/epub-tts/";
 
+interface PackageInfo {
+  version: string;
+}
+
+function readVersion(): string {
+  const parsed: unknown = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+  if (typeof parsed === "object" && parsed !== null && "version" in parsed && typeof parsed.version === "string") {
+    const info: PackageInfo = { version: parsed.version };
+    return info.version;
+  }
+  return "0.0.0";
+}
+
+// Build id: first 7 characters of the commit SHA. CI sets GITHUB_SHA. Locally, ask git.
+function readBuildId(): string {
+  const fromCi = process.env["GITHUB_SHA"];
+  if (fromCi) return fromCi.slice(0, 7);
+  try {
+    return execSync("git rev-parse --short=7 HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "dev";
+  } catch {
+    return "dev";
+  }
+}
+
 export default defineConfig({
   base,
+  define: {
+    __APP_VERSION__: JSON.stringify(readVersion()),
+    __BUILD_ID__: JSON.stringify(readBuildId()),
+  },
   worker: { format: "es" },
   build: { target: "es2022" },
   plugins: [

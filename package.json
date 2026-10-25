@@ -1,7 +1,8 @@
 {
   "name": "epub-tts",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0-rc.0",
+  "license": "GPL-3.0-only",
   "description": "EPUB reader that reads chapters aloud with Piper TTS in the browser, streamed in segments.",
   "type": "module",
   "scripts": {

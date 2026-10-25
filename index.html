@@ -6,11 +6,11 @@
     <meta name="theme-color" content="#111111" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="EPUB TTS" />
+    <meta name="apple-mobile-web-app-title" content="epub-tts" />
     <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <link rel="icon" href="%BASE_URL%icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="%BASE_URL%icon.svg" />
-    <title>EPUB TTS prototype</title>
+    <title>epub-tts</title>
     <style>
       :root { color-scheme: dark; font-family: system-ui, sans-serif; }
       body { margin: 0; padding: 12px; background: #111; color: #eee; line-height: 1.5; }
@@ -24,13 +24,17 @@
       #text span { cursor: pointer; }
       #text span.current { background: #35507a; border-radius: 3px; }
       #text p { margin: 0 0 0.6em; }
-      pre { margin: 0; font-size: 0.72rem; max-height: 34vh; overflow: auto; white-space: pre-wrap; }
+      pre { margin: 0; font-size: 0.8rem; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; -webkit-overflow-scrolling: touch; }
+      details summary { cursor: pointer; font-weight: bold; min-height: 44px; display: flex; align-items: center; }
+      #copy-log { min-width: 120px; }
+      #copy-status { font-size: 0.85rem; color: #8c8; }
+      footer { margin: 12px 0 0; font-size: 0.8rem; color: #888; text-align: center; }
       .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       #stats { font-variant-numeric: tabular-nums; }
     </style>
   </head>
   <body>
-    <h1>EPUB TTS prototype (Piper in the browser)</h1>
+    <h1>epub-tts</h1>
 
     <section>
       <div id="saved">No saved position.</div>
@@ -40,7 +44,7 @@
       <label for="chapter">2. Pick a chapter</label>
       <select id="chapter" disabled></select>
       <label for="voice">Voice</label>
-      <input id="voice" value="en_US-lessac-medium" />
+      <input id="voice" value="en_US-kristin-medium" />
       <div class="row">
         <button id="generate" disabled>3. Generate chapter audio</button>
         <button id="cancel" disabled>Cancel</button>
@@ -55,12 +59,17 @@
     </section>
 
     <section>
-      <div class="row">
-        <strong>Log</strong>
-        <button id="copy-log">Copy log</button>
-      </div>
-      <pre id="log"></pre>
+      <details id="diagnostics">
+        <summary>Diagnostics</summary>
+        <div class="row">
+          <button id="copy-log" type="button">Copy log</button>
+          <span id="copy-status" role="status"></span>
+        </div>
+        <pre id="log"></pre>
+      </details>
     </section>
+
+    <footer id="app-version"></footer>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

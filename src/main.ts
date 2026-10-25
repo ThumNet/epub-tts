@@ -38,6 +38,10 @@ const generateButton = byId("generate", HTMLButtonElement);
 const cancelButton = byId("cancel", HTMLButtonElement);
 const resumeButton = byId("resume", HTMLButtonElement);
 const copyLogButton = byId("copy-log", HTMLButtonElement);
+const copyStatus = byId("copy-status", HTMLSpanElement);
+const versionElement = byId("app-version", HTMLElement);
+const VERSION_LABEL = `epub-tts v${__APP_VERSION__} (${__BUILD_ID__})`;
+versionElement.textContent = VERSION_LABEL;
 const statsElement = byId("stats", HTMLDivElement);
 const savedElement = byId("saved", HTMLDivElement);
 const textElement = byId("text", HTMLDivElement);
@@ -516,7 +520,7 @@ function setMetadata(title: string): void {
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
     artist: openedBook?.title ?? "EPUB TTS",
-    album: "EPUB TTS prototype",
+    album: "epub-tts",
     artwork: [{ src: `${import.meta.env.BASE_URL}icon.svg`, sizes: "512x512", type: "image/svg+xml" }],
   });
 }
@@ -1047,11 +1051,68 @@ resumeButton.addEventListener("click", () => {
   void generateChapter(saved.chapterIndex, saved.sentenceIndex);
 });
 
+function diagnosticsText(): string {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches;
+  return [
+    VERSION_LABEL,
+    `user agent: ${navigator.userAgent}`,
+    `visibility=${document.visibilityState} standalone=${standalone}`,
+    "",
+    logText(),
+  ].join("\n");
+}
+
+/** Fallback for browsers without the async clipboard API. */
+function copyWithSelection(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.append(area);
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  area.remove();
+  return ok;
+}
+
+let copyStatusTimer: number | undefined;
+function showCopyStatus(message: string): void {
+  copyStatus.textContent = message;
+  window.clearTimeout(copyStatusTimer);
+  copyStatusTimer = window.setTimeout(() => {
+    copyStatus.textContent = "";
+  }, 2000);
+}
+
 copyLogButton.addEventListener("click", () => {
-  navigator.clipboard
-    .writeText(logText())
-    .then(() => log("log copied"))
-    .catch((error: unknown) => log(`copy failed: ${String(error)}`));
+  const text = diagnosticsText();
+  const fallback = (reason: string): void => {
+    if (copyWithSelection(text)) {
+      log("log copied (fallback)");
+      showCopyStatus("Copied");
+    } else {
+      log(`copy failed: ${reason}`);
+      showCopyStatus("Copy failed");
+    }
+  };
+  if (!navigator.clipboard) {
+    fallback("clipboard API missing");
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => {
+      log("log copied");
+      showCopyStatus("Copied");
+    },
+    (error: unknown) => fallback(String(error)),
+  );
 });
 
 log("ready");

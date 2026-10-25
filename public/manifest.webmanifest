@@ -1,6 +1,6 @@
 {
-  "name": "EPUB TTS prototype",
-  "short_name": "EPUB TTS",
+  "name": "epub-tts",
+  "short_name": "epub-tts",
   "description": "Reads EPUB chapters aloud with Piper TTS in the browser.",
   "start_url": "./",
   "scope": "./",
