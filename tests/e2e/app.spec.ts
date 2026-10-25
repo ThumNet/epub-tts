@@ -5,6 +5,7 @@ import {
   audioTime,
   currentIndex,
   expect,
+  FAST_POLL,
   generateChapter,
   log,
   openApp,
@@ -37,10 +38,8 @@ test("open and remember: chapters, restore after reload, forget", async ({ page 
   await expect(page.locator("#chapter")).toContainText("Chapter Three");
   await expect(page.locator("#book")).toContainText("remembered");
 
-  await page.locator("#chapter").selectOption("2");
-  // The saved position is written by generation. Generate once so a chapter is saved, then stop.
-  await page.locator("#generate").click();
-  await expect.poll(() => audioTime(page), { timeout: 30_000 }).toBeGreaterThan(0.3);
+  // The saved position is written when a chapter starts. Generate once so a chapter is saved, then stop.
+  await generateChapter(page, 2);
   await page.locator("#cancel").click();
   await expect(page.locator("#cancel")).toBeDisabled();
 
@@ -69,22 +68,25 @@ test("generate and play: source, time, segment swap, highlight, speed", async ({
   await pickBook(page);
   await generateChapter(page, 1);
   expect(await audioSource(page)).not.toBe("");
-  const first = await currentIndex(page);
-  expect(first).toBeGreaterThanOrEqual(0);
+  // Speed 1x: a segment lasts at least 4 s, so the time is seen above 0.3 s while polling every 100 ms.
+  await expect.poll(() => audioTime(page), FAST_POLL).toBeGreaterThan(0.3);
   await expect(page.locator("#text .current")).toBeVisible();
 
   await page.locator("#speed").fill("1.5");
   await expect(page.locator("#speed-label")).toHaveText("1.50x");
   await expect.poll(() => audioRate(page)).toBe(1.5);
 
-  await expect(log(page)).toContainText("swap to segment", { timeout: 45_000 });
-  await expect.poll(() => currentIndex(page), { timeout: 30_000 }).toBeGreaterThan(first + 1);
+  // Durable facts: the log keeps both swaps. The highlight index only moves forward inside the chapter.
+  await expect(log(page)).toContainText("swap to segment 3", { timeout: 45_000 });
   expect(await audioRate(page)).toBe(1.5);
+  await expect.poll(() => currentIndex(page), FAST_POLL).toBeGreaterThan(1);
 });
 
 test("chapter navigation: next, previous, previous disabled on the first text chapter", async ({ page }) => {
   await openApp(page);
   await pickBook(page);
+  // Slow playback keeps chapter 1 playing during the whole test, so it never moves on by itself.
+  await page.locator("#speed").fill("0.75");
   await generateChapter(page, 1);
   await expect(page.locator("#text")).toContainText(sentenceText(1, 1));
   // The cover has no text, so Previous is disabled once the background scan has checked it.
@@ -108,20 +110,25 @@ test("continuous playback: chapter 2 continues into chapter 3 and the book ends"
   await pickBook(page);
   await page.locator("#speed").fill("2");
   await generateChapter(page, 2);
-  await expect(page.locator("#text")).toContainText(sentenceText(2, 1));
-  await expect(page.locator("#chapter")).toHaveValue("3", { timeout: 60_000 });
-  await expect(page.locator("#text")).toContainText(sentenceText(3, 1));
+  // Only durable evidence. The log numbers are spine positions: Chapter Two is "chapter 3", Chapter Three is "chapter 4".
+  await expect(log(page)).toContainText("generating chapter 3:");
+  await expect(log(page)).toContainText("swap to chapter 4 (", { timeout: 60_000 });
   await expect(log(page)).toContainText("end of book", { timeout: 60_000 });
+  await expect(page.locator("#chapter")).toHaveValue("3");
+  await expect(page.locator("#text")).toContainText(sentenceText(3, 1));
+  await expect(page.locator("#text")).not.toContainText(sentenceText(2, 1));
 });
 
 test("jump: a click on a sentence that is not generated yet restarts there", async ({ page }) => {
   await openApp(page);
   await pickBook(page);
+  await page.locator("#speed").fill("0.75");
   await generateChapter(page, 1);
-  const last = 11;
-  await page.locator(`#text span[data-index="${last}"]`).click();
-  await expect(log(page)).toContainText("jump:");
-  await expect.poll(() => currentIndex(page), { timeout: 30_000 }).toBe(last);
+  // Sentence 10 (index 9). The generator is at most two segments ahead, so it is not generated yet.
+  await page.locator('#text span[data-index="9"]').click();
+  await expect(log(page)).toContainText("jump: restarting generation at sentence 10");
+  await expect(log(page)).toContainText("starting at sentence 10", { timeout: 30_000 });
+  await expect.poll(() => currentIndex(page), FAST_POLL).toBeGreaterThanOrEqual(9);
 });
 
 test("diagnostics: Copy log copies the header and the log", async ({ page, context, browserName }) => {

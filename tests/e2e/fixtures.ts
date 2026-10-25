@@ -33,13 +33,20 @@ export function chapterValue(chapter: 1 | 2 | 3): string {
   return String(chapter);
 }
 
-/** Pick a chapter, press Generate and wait until the first segment plays. */
+/**
+ * Pick a chapter, press Generate and wait until the first segment started to play. The wait uses the log line
+ * "segment 1 play() resolved", which stays in the log. It does not depend on how fast the audio plays.
+ * Call it once per page, because the log line is the same for every generation.
+ */
 export async function generateChapter(page: Page, chapter: 1 | 2 | 3): Promise<void> {
   await page.locator("#chapter").selectOption(chapterValue(chapter));
   await expect(page.locator("#generate")).toBeEnabled();
   await page.locator("#generate").click();
-  await expect.poll(() => audioTime(page), { timeout: 30_000 }).toBeGreaterThan(0.3);
+  await expect(log(page)).toContainText("segment 1 play() resolved", { timeout: 30_000 });
 }
+
+/** Poll often, so a state that lasts only a few seconds is still seen. */
+export const FAST_POLL = { intervals: [100], timeout: 30_000 };
 
 export function log(page: Page): Locator {
   return page.locator("#log");
