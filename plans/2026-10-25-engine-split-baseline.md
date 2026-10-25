@@ -110,3 +110,25 @@ Results: `npm run typecheck` OK (`boundaries OK: 14 files, 16 imports, 0 cycles,
 | `worker-Bf42NmSi.js` | 16.11 | 16.11 |
 
 Same asset list, no new chunk. `index` grew about 0.55 kB (hook object and arrow wrappers).
+
+## Step 3 result
+
+Step 3 moves the worker cluster into `src/engine/worker-client.ts` (`createWorkerClient(hooks)`, `VoiceChangedError`, `GeneratedClip`). `main.ts` creates `workerClient` where `let worker = createWorker()` stood. It keeps thin wrappers `ensureWorker` and `generateClip`. `cancelGeneration()` calls `workerClient.cancel()`.
+
+Changes beyond closure scoping and the import path:
+- `window.setTimeout` / `window.clearTimeout` became `globalThis.setTimeout` / `globalThis.clearTimeout`. The boundary check bans `window`. In a browser the two are the same function. The `timer` type is now `ReturnType<typeof globalThis.setTimeout> | undefined` (the Node typings are loaded too).
+- `refreshVoiceStatus()` at the end of `initWorker` became the hook `hooks.onReady()` (an extra hook next to `setStatus`). It runs at the same point, after the "model ready" log line.
+- The log line "cancel during voice init: terminating the worker" and the worker part of `cancelGeneration` are now in `cancel()`. The order is unchanged.
+
+Results: `npm run typecheck` OK (`boundaries OK: 15 files, 20 imports, 0 cycles, 4 engine files checked`), `npm test` 82 passed, `npm run test:e2e` 14 passed (12.6 s).
+
+| File in `dist/assets` | Size (vite, kB) | Step 2 |
+|---|---|---|
+| `index-DIW7Ddl9.js` | 407.41 | 407.25 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. `dist` has no `EPUB_TTS_MOCK_WORKER`, `worker.mock`, `segmentSeconds` or `e2e-worker`. The e2e build (`dist-e2e/assets`) has `worker.mock-CIdlIZTb.js` (0.87 kB) and `index-BKjLQhn5.js` (407.59 kB).
+
+Line counts: `src/main.ts` 1793 (was 1959), `src/engine/worker-client.ts` 235.
