@@ -79,6 +79,15 @@ Other scripts:
 - `npm run build` checks the types and builds into `dist/`.
 - `npm run preview` serves `dist/` at `http://localhost:4173/epub-tts/`.
 
+### Development: end-to-end tests
+
+The tests use Playwright on Chromium and Firefox. A mock speech worker replaces Piper, so the tests need no network and no voice download.
+
+1. Run `npm run test:e2e:install` once to install the browsers.
+2. Run `npm run test:e2e`. It builds the e2e bundle (`npm run build:e2e`, into `dist-e2e/`), serves it with `vite preview` and runs the tests in `tests/e2e/`.
+
+The build mode `e2e` sets `VITE_E2E`. The flag has two effects: the app uses `src/worker.mock.ts` (a quiet tone for each sentence) and it accepts `?segmentSeconds=<n>` to shorten the segments. A normal build (`npm run build`) contains neither. The e2e preview server sends COOP/COEP headers, so the page is cross-origin isolated and coi-serviceworker does not run. CI runs the tests in `.github/workflows/ci.yml`. Real audio, the lock screen and real voices stay manual checks on a phone.
+
 The first generation downloads the voice model (about 63 MB). The browser stores it in the origin private file system.
 
 ## Large files

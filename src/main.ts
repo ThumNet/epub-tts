@@ -15,6 +15,7 @@ import type { SavedPosition } from "./store";
 import { DEFAULT_VOICE_ID, VOICES, findVoice, removeVoiceFiles } from "./voices";
 import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
 import { joinClips } from "./wav";
+import { createMockWorker } from "./e2e-worker";
 import type { Clip, Timing } from "./wav";
 
 const SENTENCE_GAP_MS = 250;
@@ -23,7 +24,16 @@ const SAVE_INTERVAL_MS = 5000;
 const HEARTBEAT_MS = 10000;
 const SEEK_STEP_S = 15;
 /** Target audio length of one segment. A segment closes once clips and gaps reach this. */
-const SEGMENT_TARGET_S = 60;
+const SEGMENT_TARGET_S = segmentTargetSeconds();
+
+/** 60 s. End-to-end builds (VITE_E2E) accept `?segmentSeconds=<n>` so tests use short segments. */
+function segmentTargetSeconds(): number {
+  if (import.meta.env.VITE_E2E) {
+    const override = Number(new URLSearchParams(location.search).get("segmentSeconds"));
+    if (Number.isFinite(override) && override > 0) return override;
+  }
+  return 60;
+}
 /** The generator stays at most this many ready segments ahead of the playing one. */
 const SEGMENTS_AHEAD = 2;
 /** Already-played segments kept in memory behind the playing one. Older ones lose their audio. */
@@ -188,7 +198,10 @@ function currentSegment(): Segment | undefined {
 let wakeLock: WakeLockSentinel | undefined;
 
 function createWorker(): Worker {
-  const created = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  // End-to-end builds (VITE_E2E) use a mock worker with the same message protocol. No network, no model.
+  const created = import.meta.env.VITE_E2E
+    ? createMockWorker()
+    : new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   created.addEventListener("message", (event: MessageEvent<WorkerEvent>) => {
     if (created !== worker) return;
     const data = event.data;
