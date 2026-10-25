@@ -63,17 +63,34 @@ export async function openBook(file: File): Promise<OpenBook> {
   };
 }
 
-/** Return the text of each block element in one spine item. */
-export async function chapterParagraphs(open: OpenBook, index: number): Promise<string[]> {
+// One chain for all section reads. epub.js keeps the document on the shared section object and
+// clears it on unload, so two overlapping reads of the same section can break each other.
+let readChain: Promise<unknown> = Promise.resolve();
+
+function serialised<T>(task: () => Promise<T>): Promise<T> {
+  const run = readChain.then(task);
+  readChain = run.catch(() => undefined);
+  return run;
+}
+
+/** Return the text of each block element in one spine item. Reads run one at a time. */
+export function chapterParagraphs(open: OpenBook, index: number): Promise<string[]> {
+  return serialised(() => readParagraphs(open, index));
+}
+
+async function readParagraphs(open: OpenBook, index: number): Promise<string[]> {
   const section = open.book.spine.get(index);
-  await Promise.resolve(section.load(open.book.load.bind(open.book)));
-  const root = section.document.querySelector("body") ?? section.document.documentElement;
-  const blocks = Array.from(root.querySelectorAll(BLOCK_SELECTOR)).filter(
-    (element) => element.querySelector(BLOCK_SELECTOR) === null,
-  );
-  const texts = blocks.length > 0 ? blocks.map((b) => b.textContent ?? "") : [root.textContent ?? ""];
-  section.unload();
-  return texts.map((t) => t.replace(/\s+/g, " ").trim()).filter((t) => /[\p{L}\p{N}]/u.test(t));
+  try {
+    await Promise.resolve(section.load(open.book.load.bind(open.book)));
+    const root = section.document.querySelector("body") ?? section.document.documentElement;
+    const blocks = Array.from(root.querySelectorAll(BLOCK_SELECTOR)).filter(
+      (element) => element.querySelector(BLOCK_SELECTOR) === null,
+    );
+    const texts = blocks.length > 0 ? blocks.map((b) => b.textContent ?? "") : [root.textContent ?? ""];
+    return texts.map((t) => t.replace(/\s+/g, " ").trim()).filter((t) => /[\p{L}\p{N}]/u.test(t));
+  } finally {
+    section.unload();
+  }
 }
 
 /** Split paragraphs into sentences with Intl.Segmenter. */

@@ -11,7 +11,7 @@ import {
   setGenerationMarker,
 } from "./store";
 import type { SavedPosition } from "./store";
-import { DEFAULT_VOICE_ID, VOICES, findVoice } from "./voices";
+import { DEFAULT_VOICE_ID, VOICES, findVoice, removeVoiceFiles } from "./voices";
 import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
 import { joinClips } from "./wav";
 import type { Clip, Timing } from "./wav";
@@ -37,6 +37,8 @@ function byId<T extends HTMLElement>(id: string, type: new () => T): T {
 const fileInput = byId("file", HTMLInputElement);
 const bookInfo = byId("book", HTMLDivElement);
 const chapterSelect = byId("chapter", HTMLSelectElement);
+const prevChapterButton = byId("chapter-prev", HTMLButtonElement);
+const nextChapterButton = byId("chapter-next", HTMLButtonElement);
 const voiceSelect = byId("voice", HTMLSelectElement);
 const voiceStatus = byId("voice-status", HTMLSpanElement);
 const voiceDownloadButton = byId("voice-download", HTMLButtonElement);
@@ -116,8 +118,31 @@ interface LoadedChapter {
   url: string;
 }
 
+/**
+ * A chapter the generator is working on. `segments` is shared with `LoadedChapter` once the chapter
+ * is loaded into the audio element, so the generator keeps appending to the same array after the swap.
+ */
+interface ChapterRun {
+  chapterIndex: number;
+  voiceId: string;
+  sentences: Sentence[];
+  segments: Segment[];
+}
+
 let openedBook: OpenBook | undefined;
 let loaded: LoadedChapter | undefined;
+// The next chapter, generated in the background while the loaded chapter plays. Not in the audio element yet.
+let pendingChapter: ChapterRun | undefined;
+// The chapter the running generation started with (not the prefetched one). Undefined when idle.
+let generatingChapterIndex: number | undefined;
+// True from the start of a generation until its first segment is loaded into the audio element.
+let awaitingFirstSegment = false;
+// Settles when the running generateChapter call ends. Previous/Next awaits it after a cancel.
+let activeGeneration: Promise<void> = Promise.resolve();
+// True while a Previous/Next request is being resolved. Blocks overlapping requests.
+let navigating = false;
+// Per chapter: true when it has text, false when empty, undefined when not checked yet.
+let chapterHasText: Array<boolean | undefined> = [];
 let currentSentence = -1;
 let generating = false;
 let cancelRequested = false;
@@ -136,6 +161,8 @@ let voiceBusy = false;
 // Whether the selected voice is in the browser storage. Undefined when unknown.
 let voiceStored: boolean | undefined;
 let voiceMessage = "";
+// Text of the last failed voice action. Cleared when a new voice action starts or the voice changes.
+let voiceError = "";
 let voiceStatusToken = 0;
 
 /** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
@@ -555,6 +582,8 @@ function setupMediaSession(): void {
     ],
     ["seekbackward", (d) => seekWithinSegment(audio.currentTime - (d.seekOffset ?? SEEK_STEP_S))],
     ["seekforward", (d) => seekWithinSegment(audio.currentTime + (d.seekOffset ?? SEEK_STEP_S))],
+    ["previoustrack", () => void navigateChapter(-1, "media session")],
+    ["nexttrack", () => void navigateChapter(1, "media session")],
   ];
   for (const [action, handler] of handlers) {
     try {
@@ -756,6 +785,58 @@ function loadSegment(segmentIndex: number, offset: number, play: boolean, reason
   });
 }
 
+/**
+ * Move from the loaded chapter to the pending one on the same audio element. Runs synchronously,
+ * so a swap in the `ended` handler stays in the same task. The old chapter loses its audio.
+ */
+function switchToPendingChapter(play: boolean, reason: string): void {
+  const run = pendingChapter;
+  const first = run?.segments[0];
+  if (!run || !first?.blob || !openedBook) return;
+  const old = loaded;
+  loadToken += 1;
+  pendingChapter = undefined;
+  const url = URL.createObjectURL(first.blob);
+  loaded = {
+    chapterIndex: run.chapterIndex,
+    voiceId: run.voiceId,
+    sentences: run.sentences,
+    segments: run.segments,
+    current: 0,
+    url,
+  };
+  currentSentence = -1;
+  buffering = false;
+  ignoreSourceChangePause();
+  audio.src = url;
+  applyPlaybackRate();
+  lastPositionState = 0;
+  if (play) {
+    const startedAt = Date.now();
+    const promise = audio.play();
+    watchForStuckPlayback(`chapter ${reason}`, true);
+    promise.then(
+      () => log(`chapter ${run.chapterIndex + 1} play() resolved after ${Date.now() - startedAt} ms`),
+      (error: unknown) =>
+        log(`chapter ${run.chapterIndex + 1} play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
+    );
+  }
+  if (old) {
+    URL.revokeObjectURL(old.url);
+    // Release the old chapter's audio. Its late regenerations see `loaded !== active` and stop.
+    for (const segment of old.segments) segment.blob = undefined;
+  }
+  chapterSelect.value = String(run.chapterIndex);
+  renderText(run.sentences);
+  setMetadata(openedBook.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
+  highlight(first.startSentence);
+  persistPosition("chapter swap");
+  dropFarSegments();
+  wakeGeneration?.();
+  updateControls();
+  log(`swap to chapter ${run.chapterIndex + 1} (${reason})`);
+}
+
 audio.addEventListener("ended", () => {
   if (!loaded) return;
   const nextIndex = loaded.current + 1;
@@ -766,10 +847,13 @@ audio.addEventListener("ended", () => {
   } else if (next) {
     log(`swap to segment ${nextIndex + 1}: audio was dropped, regenerating`);
     loadSegment(nextIndex, 0, true, "swap");
+  } else if (pendingChapter?.segments[0]?.blob) {
+    switchToPendingChapter(true, "swap");
   } else if (generating) {
     buffering = true;
-    log(`buffering: segment ${nextIndex + 1} is not ready yet`);
-    statsElement.textContent = `Buffering: waiting for segment ${nextIndex + 1}...`;
+    const waitingFor = pendingChapter ? `the first segment of chapter ${pendingChapter.chapterIndex + 1}` : `segment ${nextIndex + 1}`;
+    log(`buffering: ${waitingFor} is not ready yet`);
+    statsElement.textContent = `Buffering: waiting for ${waitingFor}...`;
   } else {
     log("last segment ended");
   }
@@ -1023,9 +1107,21 @@ function throwIfCancelled(): void {
   if (cancelRequested) throw new Error("Generation cancelled.");
 }
 
+/**
+ * Ready segments ahead of the playing one. For the pending chapter this counts the rest of the
+ * loaded chapter plus all pending segments, so both share the SEGMENTS_AHEAD budget.
+ */
+function segmentsAhead(segments: Segment[]): number {
+  if (loaded?.segments === segments) return segments.length - 1 - loaded.current;
+  if (loaded && pendingChapter?.segments === segments) {
+    return loaded.segments.length - 1 - loaded.current + segments.length;
+  }
+  return 0;
+}
+
 /** Wait until fewer than SEGMENTS_AHEAD ready segments are queued after the playing one. */
 async function waitForRoom(segments: Segment[]): Promise<void> {
-  const ahead = (): number => (loaded?.segments === segments ? segments.length - 1 - loaded.current : 0);
+  const ahead = (): number => segmentsAhead(segments);
   if (ahead() >= SEGMENTS_AHEAD) log(`generation paused: ${ahead()} segments ahead of playback`);
   while (!cancelRequested && ahead() >= SEGMENTS_AHEAD) {
     await new Promise<void>((resolve) => {
@@ -1036,22 +1132,46 @@ async function waitForRoom(segments: Segment[]): Promise<void> {
   throwIfCancelled();
 }
 
-function onSegmentReady(segments: Segment[], chapterIndex: number, sentences: Sentence[]): void {
+/** Wait until the chapter run is in the audio element. The generator never prefetches two chapters ahead. */
+async function waitUntilLoaded(run: ChapterRun): Promise<void> {
+  while (!cancelRequested && loaded?.segments !== run.segments) {
+    await new Promise<void>((resolve) => {
+      wakeGeneration = resolve;
+    });
+    wakeGeneration = undefined;
+  }
+  throwIfCancelled();
+}
+
+function onSegmentReady(run: ChapterRun): void {
+  const { segments, chapterIndex, sentences } = run;
   const index = segments.length - 1;
   const segment = segments[index];
-  if (!segment?.blob || !openedBook) return;
-  if (index === 0) {
-    if (loaded) URL.revokeObjectURL(loaded.url);
+  if (!segment?.blob || !openedBook || cancelRequested) return;
+  if (index === 0 && run === pendingChapter) {
+    log(`chapter ${chapterIndex + 1}: first segment ready (prefetched)`);
+    if (buffering && loaded && loaded.current === loaded.segments.length - 1) {
+      log(`chapter ${chapterIndex + 1} was awaited${wantPlaying ? "" : ", paused by user: loaded without playing"}`);
+      switchToPendingChapter(wantPlaying, "buffer end");
+    }
+  } else if (index === 0) {
+    if (loaded) {
+      URL.revokeObjectURL(loaded.url);
+      for (const old of loaded.segments) old.blob = undefined;
+    }
     const url = URL.createObjectURL(segment.blob);
-    loaded = { chapterIndex, voiceId: generationVoiceId, sentences, segments, current: 0, url };
+    loaded = { chapterIndex, voiceId: run.voiceId, sentences, segments, current: 0, url };
+    awaitingFirstSegment = false;
     currentSentence = -1;
     buffering = false;
     ignoreSourceChangePause();
     audio.src = url;
     applyPlaybackRate();
+    chapterSelect.value = String(chapterIndex);
     renderText(sentences);
     setMetadata(openedBook.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
     highlight(segment.startSentence);
+    updateControls();
     log("segment 1 started");
     const startedAt = Date.now();
     const promise = audio.play();
@@ -1070,12 +1190,9 @@ function onSegmentReady(segments: Segment[], chapterIndex: number, sentences: Se
   if (loaded?.segments === segments) dropFarSegments();
 }
 
-async function generateSegments(
-  sentences: Sentence[],
-  startSentence: number,
-  chapterIndex: number,
-): Promise<void> {
-  const segments: Segment[] = [];
+/** Generate the segments of one chapter run, appending to `run.segments`. */
+async function generateSegments(run: ChapterRun, startSentence: number): Promise<void> {
+  const { segments, sentences, chapterIndex } = run;
   let next = startSentence;
   let totalGenMs = 0;
   let totalAudioS = 0;
@@ -1098,7 +1215,7 @@ async function generateSegments(
       totalGenMs += genMs;
       next += 1;
       statsElement.textContent =
-        `Segment ${segments.length + 1}: sentence ${next}/${sentences.length}. ` +
+        `Chapter ${chapterIndex + 1}, segment ${segments.length + 1}: sentence ${next}/${sentences.length}. ` +
         `Generated ${(totalGenMs / 1000).toFixed(1)} s for ${(totalAudioS + seconds).toFixed(1)} s of audio.`;
       setGenerationMarker({ chapterIndex, done: next, total: sentences.length, at: Date.now() });
     }
@@ -1116,27 +1233,58 @@ async function generateSegments(
         `generated in ${((performance.now() - startedAt) / 1000).toFixed(1)} s, ` +
         `sentences ${segmentStart + 1}-${next}, ${(chapter.blob.size / 1048576).toFixed(1)} MB)`,
     );
-    onSegmentReady(segments, chapterIndex, sentences);
+    onSegmentReady(run);
   }
   const summary =
-    `Generation done. ${segments.length} segments, audio ${totalAudioS.toFixed(1)} s, ` +
+    `Chapter ${chapterIndex + 1} generation done. ${segments.length} segments, audio ${totalAudioS.toFixed(1)} s, ` +
     `generation ${(totalGenMs / 1000).toFixed(1)} s, RTF ${(totalGenMs / 1000 / Math.max(totalAudioS, 1)).toFixed(2)}.`;
   statsElement.textContent = summary;
   log(summary);
 }
 
-async function generateChapter(chapterIndex: number, startSentence = 0): Promise<void> {
-  if (!openedBook || generating) return;
+/** Read and split a chapter. Records whether it has text. */
+async function chapterSentences(book: OpenBook, index: number): Promise<Sentence[]> {
+  const sentences = splitSentences(await chapterParagraphs(book, index), book.language);
+  if (book === openedBook) {
+    chapterHasText[index] = sentences.length > 0;
+    updateControls();
+  }
+  return sentences;
+}
+
+interface TextChapter {
+  chapterIndex: number;
+  sentences: Sentence[];
+}
+
+/** The nearest chapter after (`step` 1) or before (`step` -1) `from` that has text. Logs skipped chapters. */
+async function findTextChapter(book: OpenBook, from: number, step: 1 | -1): Promise<TextChapter | undefined> {
+  for (let index = from + step; index >= 0 && index < book.chapters.length; index += step) {
+    if (book !== openedBook) return undefined;
+    if (chapterHasText[index] !== false) {
+      const sentences = await chapterSentences(book, index);
+      if (sentences.length > 0) return { chapterIndex: index, sentences };
+    }
+    log(`skipped chapter ${index + 1}: no text`);
+  }
+  return undefined;
+}
+
+async function runGeneration(chapterIndex: number, startSentence: number, preparsed: Sentence[] | undefined): Promise<void> {
+  const book = openedBook;
+  if (!book) return;
   generating = true;
   cancelRequested = false;
+  pendingChapter = undefined;
+  generatingChapterIndex = chapterIndex;
+  awaitingFirstSegment = true;
   generationVoiceId = selectedVoiceId();
   updateControls();
   audio.pause();
   try {
     await acquireWakeLock();
     await ensureWorker(generationVoiceId);
-    const paragraphs = await chapterParagraphs(openedBook, chapterIndex);
-    const sentences = splitSentences(paragraphs, openedBook.language);
+    const sentences = preparsed ?? (await chapterSentences(book, chapterIndex));
     if (sentences.length === 0) {
       statsElement.textContent = "This chapter has no text. Pick another chapter.";
       return;
@@ -1148,7 +1296,30 @@ async function generateChapter(chapterIndex: number, startSentence = 0): Promise
         `starting at sentence ${start + 1}`,
     );
     setGenerationMarker({ chapterIndex, done: start, total: sentences.length, at: Date.now() });
-    await generateSegments(sentences, start, chapterIndex);
+    let run: ChapterRun = { chapterIndex, voiceId: generationVoiceId, sentences, segments: [] };
+    await generateSegments(run, start);
+    // Continue into the following chapters, one chapter ahead of playback at most.
+    for (;;) {
+      await waitUntilLoaded(run);
+      const next = await findTextChapter(book, run.chapterIndex, 1);
+      throwIfCancelled();
+      if (!next || book !== openedBook) {
+        log("end of book");
+        statsElement.textContent = "End of book. Generation done.";
+        break;
+      }
+      const nextRun: ChapterRun = {
+        chapterIndex: next.chapterIndex,
+        voiceId: generationVoiceId,
+        sentences: next.sentences,
+        segments: [],
+      };
+      pendingChapter = nextRun;
+      log(`prefetch: generating chapter ${next.chapterIndex + 1} in the background (${next.sentences.length} sentences)`);
+      setGenerationMarker({ chapterIndex: next.chapterIndex, done: 0, total: next.sentences.length, at: Date.now() });
+      await generateSegments(nextRun, 0);
+      run = nextRun;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     statsElement.textContent = `Stopped: ${message}`;
@@ -1157,13 +1328,115 @@ async function generateChapter(chapterIndex: number, startSentence = 0): Promise
     setGenerationMarker(undefined);
     await releaseWakeLock();
     generating = false;
+    generatingChapterIndex = undefined;
+    awaitingFirstSegment = false;
     wakeGeneration = undefined;
+    if (pendingChapter) {
+      log(`prefetched chapter ${pendingChapter.chapterIndex + 1} discarded`);
+      pendingChapter = undefined;
+    }
     if (buffering) {
       buffering = false;
       log("generation ended while buffering. Playback stays stopped.");
     }
     refreshSavedUi();
   }
+}
+
+function generateChapter(chapterIndex: number, startSentence = 0, preparsed?: Sentence[]): Promise<void> {
+  if (!openedBook || generating) return Promise.resolve();
+  activeGeneration = runGeneration(chapterIndex, startSentence, preparsed);
+  return activeGeneration;
+}
+
+function cancelGeneration(): void {
+  cancelRequested = true;
+  cancelEpoch += 1;
+  // Invalidate the prefetched chapter now. Neither `ended` nor onSegmentReady may swap into it after Cancel.
+  if (pendingChapter) {
+    log(`prefetched chapter ${pendingChapter.chapterIndex + 1} discarded (cancel)`);
+    pendingChapter = undefined;
+  }
+  if (initPending) {
+    // No generate request is running. Terminate the worker so the init wait settles.
+    log("cancel during voice init: terminating the worker");
+    failWorker(new Error("Generation cancelled."));
+  } else {
+    post({ type: "cancel" });
+  }
+  wakeGeneration?.();
+  log("cancel requested");
+}
+
+/**
+ * Start a chapter the user picked by Previous, Next or the chapter select. `find` resolves the target
+ * chapter. A running generation is cancelled first, then the target starts from its beginning.
+ * Errors are caught here, so fire-and-forget callers never produce an unhandled rejection.
+ */
+async function runNavigation(
+  source: string,
+  noTarget: string,
+  find: (book: OpenBook) => Promise<TextChapter | undefined>,
+): Promise<void> {
+  const book = openedBook;
+  if (!book || voiceBusy || navigating) {
+    log(`chapter change ignored (${source}): ${book ? "busy" : "no book open"}`);
+    showPlayingChapter();
+    return;
+  }
+  navigating = true;
+  updateControls();
+  try {
+    const target = await find(book);
+    if (book !== openedBook) return;
+    if (!target) {
+      statsElement.textContent = noTarget;
+      log(noTarget);
+      showPlayingChapter();
+      return;
+    }
+    if (generating) {
+      log(`chapter change (${source}): cancelling the running generation`);
+      cancelGeneration();
+      await activeGeneration;
+    }
+    if (generating || book !== openedBook) {
+      showPlayingChapter();
+      return;
+    }
+    chapterSelect.value = String(target.chapterIndex);
+    void generateChapter(target.chapterIndex, 0, target.sentences);
+  } catch (error) {
+    statsElement.textContent = `Could not change the chapter: ${errorName(error)}`;
+    log(`chapter change failed (${source}): ${errorName(error)}`);
+    showPlayingChapter();
+  } finally {
+    navigating = false;
+    updateControls();
+  }
+}
+
+/** Previous or next chapter with text, relative to the playing chapter. Used by buttons and lock-screen actions. */
+async function navigateChapter(step: 1 | -1, source: string): Promise<void> {
+  const label = step > 0 ? "next" : "previous";
+  const base = navigationBase();
+  log(`${label} chapter requested (${source}) from chapter ${base + 1}`);
+  if (!Number.isInteger(base)) return;
+  await runNavigation(source, `There is no ${label} chapter with text.`, (book) => findTextChapter(book, base, step));
+}
+
+/** The user picked a chapter in the select. While generating, this behaves like Previous/Next. */
+async function selectChapter(index: number): Promise<void> {
+  if (!Number.isInteger(index)) return;
+  if (playingChapterIndex() === index) {
+    showPlayingChapter();
+    return;
+  }
+  log(`chapter ${index + 1} picked in the list while generating`);
+  await runNavigation("select", "That chapter has no text.", async (book) => {
+    const sentences = await chapterSentences(book, index);
+    return sentences.length > 0 ? { chapterIndex: index, sentences } : undefined;
+  });
 }
 
 // ---------------------------------------------------------------- voice and speed settings
@@ -1209,6 +1482,39 @@ audio.addEventListener("ratechange", () => {
 
 // (voice state variables are declared with the other state at the top)
 
+/**
+ * The chapter that is playing or starting. Before the first segment of a running generation loads,
+ * that is the chapter being generated. Otherwise it is the loaded chapter. Undefined when neither exists.
+ */
+function playingChapterIndex(): number | undefined {
+  if (generating && awaitingFirstSegment && generatingChapterIndex !== undefined) return generatingChapterIndex;
+  return loaded?.chapterIndex ?? (generating ? generatingChapterIndex : undefined);
+}
+
+/** The chapter Previous/Next move from: the playing chapter, else the select value. */
+function navigationBase(): number {
+  return playingChapterIndex() ?? Number(chapterSelect.value);
+}
+
+/** Show the playing chapter in the select. Call after every swap, fresh start and navigation. */
+function showPlayingChapter(): void {
+  const index = playingChapterIndex();
+  if (index !== undefined) chapterSelect.value = String(index);
+}
+
+/**
+ * True when a chapter before (`step` -1) or after (`step` 1) `from` may have text. A chapter that is
+ * not scanned yet counts as maybe. Once the scan has checked it, only chapters with text count.
+ */
+function hasTextChapter(from: number, step: 1 | -1): boolean {
+  const book = openedBook;
+  if (!book || !Number.isInteger(from)) return false;
+  for (let index = from + step; index >= 0 && index < book.chapters.length; index += step) {
+    if (chapterHasText[index] !== false) return true;
+  }
+  return false;
+}
+
 function updateControls(): void {
   const locked = generating || voiceBusy;
   generateButton.disabled = locked || !openedBook;
@@ -1216,10 +1522,15 @@ function updateControls(): void {
   const saved = loadPosition();
   resumeButton.disabled = locked || !saved || openedBook?.id !== saved.bookId;
   voiceSelect.disabled = locked;
+  const base = navigationBase();
+  prevChapterButton.disabled = voiceBusy || navigating || !hasTextChapter(base, -1);
+  nextChapterButton.disabled = voiceBusy || navigating || !hasTextChapter(base, 1);
   voiceDownloadButton.disabled = locked || voiceStored !== false;
   voiceRemoveButton.disabled = locked || voiceStored !== true;
   if (voiceBusy) {
     voiceStatus.textContent = voiceMessage;
+  } else if (voiceError) {
+    voiceStatus.textContent = voiceError;
   } else if (voiceStored === undefined) {
     voiceStatus.textContent = "Status unknown";
   } else if (voiceStored) {
@@ -1264,6 +1575,7 @@ voiceSelect.addEventListener("change", () => {
   persistSettings();
   log(`voice selected: ${id}. The worker switches before the next generation.`);
   voiceStored = undefined;
+  voiceError = "";
   void refreshVoiceStatus();
 });
 
@@ -1271,6 +1583,7 @@ voiceDownloadButton.addEventListener("click", () => {
   if (generating || voiceBusy) return;
   const id = selectedVoiceId();
   voiceBusy = true;
+  voiceError = "";
   voiceMessage = "Downloading 0%";
   updateControls();
   log(`voice download started: ${id}`);
@@ -1297,14 +1610,23 @@ voiceRemoveButton.addEventListener("click", () => {
   if (generating || voiceBusy) return;
   const id = selectedVoiceId();
   voiceBusy = true;
+  voiceError = "";
   voiceMessage = "Removing...";
   updateControls();
   log(`voice remove started: ${id}`);
   void (async () => {
     try {
       await remove(id);
+      // The library swallows errors and needs FileSystemHandle.remove() (not in Safari). Check, then delete directly.
+      if ((await readStoredVoices())?.includes(id)) {
+        log(`library remove left ${id} in storage: deleting the files directly`);
+        await removeVoiceFiles(id);
+      }
+      const left = await readStoredVoices();
+      if (left?.includes(id)) throw new Error("the files are still in storage after deletion");
       log(`voice removed: ${id}`);
     } catch (error) {
+      voiceError = `Could not remove the voice: ${errorName(error)}`;
       log(`voice remove failed: ${errorName(error)}`);
     } finally {
       voiceBusy = false;
@@ -1343,15 +1665,39 @@ fileInput.addEventListener("change", () => {
   if (!file) return;
   bookInfo.textContent = "Reading EPUB...";
   openBook(file)
-    .then((opened) => {
+    .then(async (opened) => {
+      // A running generation and the loaded chapter belong to the previous book.
+      if (generating) {
+        log("new book opened: cancelling the running generation");
+        cancelGeneration();
+        await activeGeneration;
+      }
+      if (loaded) {
+        audio.pause();
+        ignoreSourceChangePause();
+        audio.removeAttribute("src");
+        audio.load();
+        URL.revokeObjectURL(loaded.url);
+        loaded = undefined;
+        textElement.replaceChildren();
+        currentSentence = -1;
+      }
       openedBook = opened;
       bookInfo.textContent = `${opened.title} (language: ${opened.language}, ${opened.chapters.length} spine items)`;
       chapterSelect.replaceChildren(
         ...opened.chapters.map((c) => new Option(c.label, String(c.index))),
       );
       chapterSelect.disabled = false;
+      chapterHasText = new Array<boolean | undefined>(opened.chapters.length).fill(undefined);
       log(`opened "${opened.title}" with ${opened.chapters.length} spine items`);
+      // GROUP C: preselect the saved chapter when this is the saved book. Nothing starts by itself.
+      const savedPosition = loadPosition();
+      if (savedPosition?.bookId === opened.id && opened.chapters[savedPosition.chapterIndex]) {
+        chapterSelect.value = String(savedPosition.chapterIndex);
+        log(`restored saved chapter ${savedPosition.chapterIndex + 1}`);
+      }
       refreshSavedUi();
+      void scanChapters(opened);
     })
     .catch((error: unknown) => {
       bookInfo.textContent = `Could not open the EPUB: ${String(error)}`;
@@ -1359,24 +1705,36 @@ fileInput.addEventListener("change", () => {
     });
 });
 
+/** Check every chapter for text in the background, so Previous and Next know where the book starts and ends. */
+async function scanChapters(book: OpenBook): Promise<void> {
+  for (let index = 0; index < book.chapters.length; index += 1) {
+    if (book !== openedBook) return;
+    if (chapterHasText[index] !== undefined) continue;
+    try {
+      await chapterSentences(book, index);
+    } catch (error) {
+      log(`chapter scan: chapter ${index + 1} could not be read: ${errorName(error)}`);
+    }
+  }
+  const empty = chapterHasText.filter((value) => value === false).length;
+  log(`chapter scan done: ${empty} of ${book.chapters.length} spine items have no text`);
+  updateControls();
+}
+
+chapterSelect.addEventListener("change", () => {
+  // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
+  if (generating || navigating) void selectChapter(Number(chapterSelect.value));
+  else updateControls();
+});
+prevChapterButton.addEventListener("click", () => void navigateChapter(-1, "button"));
+nextChapterButton.addEventListener("click", () => void navigateChapter(1, "button"));
+
 generateButton.addEventListener("click", () => {
   if (voiceBusy) return;
   void generateChapter(Number(chapterSelect.value));
 });
 
-cancelButton.addEventListener("click", () => {
-  cancelRequested = true;
-  cancelEpoch += 1;
-  if (initPending) {
-    // No generate request is running. Terminate the worker so the init wait settles.
-    log("cancel during voice init: terminating the worker");
-    failWorker(new Error("Generation cancelled."));
-  } else {
-    post({ type: "cancel" });
-  }
-  wakeGeneration?.();
-  log("cancel requested");
-});
+cancelButton.addEventListener("click", () => cancelGeneration());
 
 resumeButton.addEventListener("click", () => {
   const saved = loadPosition();

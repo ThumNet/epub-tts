@@ -7,7 +7,7 @@ A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It run
 1. Open https://thumnet.github.io/epub-tts/ on your phone.
 2. Optional on iPhone: add the app to the home screen. Open the page in Safari, tap Share, then tap "Add to Home Screen".
 3. Pick an EPUB file. Pick a chapter. Press "Generate chapter audio". Playback starts after the first segment.
-4. Pick a voice in the "Voice" list. The default is Kristin. The page shows whether the voice is downloaded. Use "Download" to fetch it ahead of time (about 61 MB) or "Remove" to free the space. The first generation downloads the voice by itself if needed.
+4. Pick a voice in the "Voice" list. The default is Kristin. The page shows whether the voice is downloaded. Use "Download" to fetch it ahead of time (about 61 MB) or "Remove" to free the space. If the library cannot remove the files (Safari lacks the call it uses), the app deletes them directly. The page shows an error if the voice stays stored. The first generation downloads the voice by itself if needed.
 5. Use the "Speed" slider (0.75x to 2x) to change the playback speed. "Reset to 1x" returns to normal speed. The app remembers your voice and speed.
 
 Known limit: on iOS, after a pause of about 3 to 6 seconds, resume from the lock screen stops working. It works again after you bring the app to the foreground. This comes from the owner's own phone log. We did not verify it on other devices.
@@ -30,7 +30,20 @@ The app version shows in the footer. Licence: see `LICENSE`. Third-party licence
 - If you seek to a dropped segment, the app regenerates it on demand.
 - If playback reaches a segment that is not ready, the app shows "Buffering" and continues when the segment is ready.
 - The app saves the reading position. After a restart, pick the same EPUB and press "Resume saved position". Generation then restarts from the saved sentence.
-- The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward and seek forward.
+- The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward, seek forward, previous track and next track.
+
+### Chapter navigation and continuous playback
+
+- Use the "Prev" and "Next" buttons beside the chapter list. They go to the nearest chapter with text and start it from the beginning. They skip chapters without text, such as a cover. They also cancel a running generation.
+- "Prev" is disabled on the first chapter with text. "Next" is disabled on the last one.
+- The lock-screen previous track and next track buttons do the same. Support depends on the device and the browser.
+- When the last segment of a chapter ends, playback continues into the next chapter with text. The same audio element plays it, so there is no stop.
+- After a chapter is fully generated, the app generates the first segments of the next chapter in the background. These segments share the 2-segment lookahead limit (`SEGMENTS_AHEAD`) with the playing chapter.
+- If the next chapter is not ready when the current one ends, the app shows "Buffering" and continues when it is ready.
+- Playback stops at the end of the book. Cancel, Prev, Next and a new Generate discard the prefetched chapter.
+- The app saves the position of the new chapter when playback enters it. "Resume saved position" continues there.
+- While a generation runs, picking another chapter in the list works like Prev and Next: the app cancels the generation and starts that chapter. The list always shows the playing chapter. Prev and Next move from the playing chapter.
+- When you pick an EPUB that matches the saved position, the app preselects the saved chapter. It does not start by itself. Press "Resume saved position".
 - The on-screen log records diagnostics. Open "Diagnostics" and press "Copy log" to copy it.
 
 ### Recovery from stuck resume on iOS

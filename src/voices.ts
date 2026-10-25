@@ -17,6 +17,33 @@ export const VOICES: readonly VoiceOption[] = [
   { id: "en_GB-cori-medium", label: "Cori (UK, female)", sizeMb: 60.6 },
 ];
 
+function isNotFound(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "NotFoundError";
+}
+
+/**
+ * Delete the stored files of a voice straight from the browser file storage (OPFS). The library's
+ * remove() uses FileSystemHandle.remove(), which Safari lacks, and it swallows every error.
+ * The library stores `${id}.onnx` and `${id}.onnx.json` in the folder "piper". A missing file is fine.
+ */
+export async function removeVoiceFiles(id: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await root.getDirectoryHandle("piper");
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  for (const name of [`${id}.onnx`, `${id}.onnx.json`]) {
+    try {
+      await dir.removeEntry(name);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+  }
+}
+
 export function findVoice(id: string): VoiceOption | undefined {
   return VOICES.find((voice) => voice.id === id);
 }
