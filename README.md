@@ -9,6 +9,7 @@ A web app that reads an EPUB chapter aloud with Piper TTS in the browser. It run
 3. Pick an EPUB file. Pick a chapter. Press "Generate chapter audio". Playback starts after the first segment.
 4. Pick a voice in the "Voice" list. The default is Kristin. The page shows whether the voice is downloaded. Use "Download" to fetch it ahead of time (about 61 MB) or "Remove" to free the space. If the library cannot remove the files (Safari lacks the call it uses), the app deletes them directly. The page shows an error if the voice stays stored. The first generation downloads the voice by itself if needed.
 5. Use the "Speed" slider (0.75x to 2x) to change the playback speed. "Reset to 1x" returns to normal speed. The app remembers your voice and speed.
+6. The app remembers the last EPUB you opened on this device. After a restart, the app reopens it and shows "restored from this device". Press "Forget this book" to delete it from the device. The saved position and settings stay. The browser may clear site storage. We did not verify this on iOS. Offline use comes in a later phase.
 
 Known limit: on iOS, after a pause of about 3 to 6 seconds, resume from the lock screen stops working. It works again after you bring the app to the foreground. This comes from the owner's own phone log. We did not verify it on other devices.
 
@@ -30,7 +31,8 @@ The app version shows in the footer. Licence: see `LICENSE`. Third-party licence
 - If you seek to a dropped segment, the app regenerates it on demand.
 - Tap a sentence to play from there. If the sentence is not generated yet, the app restarts generation from that sentence. Playback then starts after a short wait.
 - If playback reaches a segment that is not ready, the app shows "Buffering" and continues when the segment is ready.
-- The app saves the reading position. After a restart, pick the same EPUB and press "Resume saved position". Generation then restarts from the saved sentence.
+- The app saves the reading position. After a restart, press "Resume saved position". Generation then restarts from the saved sentence.
+- The app remembers one book. After you open an EPUB, the app stores a copy in the browser (IndexedDB database `epub-tts`, store `book`). Opening another EPUB replaces it. At startup the app reopens it and preselects the saved chapter. Nothing starts by itself. If you pick a file during the reopen, your file wins. If the stored book cannot be parsed, the app forgets it. "Forget this book" deletes the copy. The button is hidden when no book is stored. It is disabled while the app generates or plays. The app does not store generated audio. If the app cannot store the book, it shows a message and the book still works.
 - The app sets Media Session metadata and the lock-screen actions play, pause, seek, seek backward, seek forward, previous track and next track.
 
 ### Chapter navigation and continuous playback
