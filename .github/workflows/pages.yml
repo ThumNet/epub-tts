@@ -2,7 +2,10 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      # Temporary: deploys the PR branch for phone testing. Remove before merging.
+      - feat/phone-test-prototype
   workflow_dispatch:
 
 permissions:
