@@ -3,7 +3,6 @@ import type { OpenBook, Sentence } from "./epub";
 import { forgetBook, loadBook, saveBook, storedBookToFile } from "./book-store";
 import { log, logText } from "./log";
 import {
-  loadGenerationMarker,
   loadPosition,
   loadSettings,
   savePosition,
@@ -15,8 +14,8 @@ import { download, remove, stored } from "@mintplex-labs/piper-tts-web";
 import { joinClips } from "./wav";
 import { createWorkerClient, VoiceChangedError } from "./engine/worker-client";
 import type { GeneratedClip } from "./engine/worker-client";
+import { createDiagnostics } from "./engine/diagnostics";
 import {
-  HEARTBEAT_MS,
   MAX_RECOVERY_ATTEMPTS,
   METADATA_TIMEOUT_MS,
   PARAGRAPH_GAP_MS,
@@ -107,6 +106,8 @@ const hooks: EngineHooks = {
   getSelectedChapter: () => Number(chapterSelect.value),
 };
 
+const diagnostics = createDiagnostics({ audio, getVisibility: () => document.visibilityState });
+
 // ---------------------------------------------------------------- environment
 
 const isIos =
@@ -128,15 +129,7 @@ log(
     `standalone=${window.matchMedia("(display-mode: standalone)").matches}`,
 );
 
-const staleMarker = loadGenerationMarker();
-if (staleMarker) {
-  log(
-    `PREVIOUS SESSION ENDED WHILE GENERATING: chapter index ${staleMarker.chapterIndex}, ` +
-      `${staleMarker.done}/${staleMarker.total} sentences, last update ${new Date(staleMarker.at).toLocaleTimeString()}. ` +
-      "The tab was probably killed or reloaded.",
-  );
-  setGenerationMarker(undefined);
-}
+diagnostics.reportStaleMarker();
 
 // ---------------------------------------------------------------- state
 
@@ -272,14 +265,7 @@ setInterval(() => {
   if (!audio.paused) persistPosition("interval");
 }, SAVE_INTERVAL_MS);
 
-setInterval(() => {
-  if (!audio.paused) {
-    log(
-      `heartbeat: visibility=${document.visibilityState} t=${audio.currentTime.toFixed(1)} s ` +
-        `readyState=${audio.readyState} networkState=${audio.networkState}`,
-    );
-  }
-}, HEARTBEAT_MS);
+diagnostics.startHeartbeat();
 
 refreshSavedUi();
 
@@ -301,53 +287,11 @@ window.addEventListener("pageshow", (event) => log(`pageshow persisted=${event.p
 document.addEventListener("freeze", () => log("freeze"));
 document.addEventListener("resume", () => log("resume (page lifecycle)"));
 
-const AUDIO_EVENTS = [
-  "play",
-  "playing",
-  "pause",
-  "ended",
-  "waiting",
-  "stalled",
-  "suspend",
-  "emptied",
-  "loadedmetadata",
-  "error",
-  "seeked",
-];
-for (const name of AUDIO_EVENTS) {
-  audio.addEventListener(name, () => {
-    const detail = name === "error" ? ` code=${audio.error?.code ?? "?"}` : "";
-    log(`audio ${name} at ${audio.currentTime.toFixed(1)} s${detail}`);
-  });
-}
+diagnostics.logAudioEvents();
 
 // ---------------------------------------------------------------- audio session
 
-interface AudioSessionLike {
-  type: string;
-}
-
-function isAudioSession(value: unknown): value is AudioSessionLike {
-  return typeof value === "object" && value !== null && "type" in value;
-}
-
-function findAudioSession(): AudioSessionLike | undefined {
-  if (!("audioSession" in navigator)) return undefined;
-  const candidate: unknown = navigator.audioSession;
-  return isAudioSession(candidate) ? candidate : undefined;
-}
-
-const audioSession = findAudioSession();
-if (audioSession) {
-  try {
-    audioSession.type = "playback";
-    log(`audioSession.type set to "${audioSession.type}"`);
-  } catch (error) {
-    log(`audioSession.type could not be set: ${String(error)}`);
-  }
-} else {
-  log("audioSession: not supported");
-}
+diagnostics.setupAudioSession();
 
 // ---------------------------------------------------------------- stuck playback recovery
 

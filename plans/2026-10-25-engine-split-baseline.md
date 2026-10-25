@@ -131,4 +131,21 @@ Results: `npm run typecheck` OK (`boundaries OK: 15 files, 20 imports, 0 cycles,
 
 Same asset list, no new chunk. `dist` has no `EPUB_TTS_MOCK_WORKER`, `worker.mock`, `segmentSeconds` or `e2e-worker`. The e2e build (`dist-e2e/assets`) has `worker.mock-CIdlIZTb.js` (0.87 kB) and `index-BKjLQhn5.js` (407.59 kB).
 
-Line counts: `src/main.ts` 1793 (was 1959), `src/engine/worker-client.ts` 235.
+Line counts: `src/main.ts` 1793 (was 1980 at commit 0d30ea6, before step 3; an earlier version of this line said 1959, which was wrong), `src/engine/worker-client.ts` 235.
+
+## Step 4a result
+
+Step 4a moves the diagnostics pieces into `src/engine/diagnostics.ts` (`createDiagnostics({ audio, getVisibility })`). Four methods, each called from `main.ts` at the position of the code it replaced: `reportStaleMarker()` (the stale generation marker), `startHeartbeat()`, `logAudioEvents()`, `setupAudioSession()`. `getVisibility` is `() => document.visibilityState`. The page-lifecycle listeners stay in `main.ts`.
+
+Results: `npm run typecheck` OK (`boundaries OK: 16 files, 24 imports, 0 cycles, 5 engine files checked`), `npm test` 82 passed, `npm run test:e2e` 14 passed (12.6 s). `dist` has no mock strings.
+
+| File in `dist/assets` | Size (vite, kB) | Step 3 |
+|---|---|---|
+| `index-CX8mpg3Q.js` | 407.70 | 407.41 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-DP79wuly.js` (407.88 kB).
+
+Line counts: `src/main.ts` 1737 (was 1793), `src/engine/diagnostics.ts` 98.
