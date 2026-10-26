@@ -124,17 +124,8 @@ export function describeProgress(done: number, total: number, playing: boolean):
   return playing ? `Sentence ${done} of ${total}` : `Preparing audio, sentence ${done} of ${total}`;
 }
 
-export interface PositionLike {
-  bookTitle: string;
-  chapterIndex: number;
-  sentenceIndex: number;
-  seconds: number;
-  savedAt: number;
-}
-
-export function describePosition(p: PositionLike, now: number): string {
-  const minutes = Math.floor(p.seconds / 60);
-  const seconds = Math.floor(p.seconds % 60).toString().padStart(2, "0");
-  const ago = Math.round((now - p.savedAt) / 1000);
-  return `Saved: "${p.bookTitle}", chapter ${p.chapterIndex + 1}, sentence ${p.sentenceIndex + 1}, ${minutes}:${seconds} (${ago} s ago).`;
+/** The title for the lock screen. Never a list number. */
+export function chapterTitle(chapter: { title: string } | undefined): string {
+  const title = chapter?.title.trim() ?? "";
+  return title === "" ? "(no title)" : title;
 }

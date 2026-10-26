@@ -18,6 +18,7 @@ import {
 import type { EngineHooks } from "./hooks";
 import type { MediaSessionController } from "./media-session";
 import {
+  chapterTitle,
   describeProgress,
   errorName,
   farSegments,
@@ -558,7 +559,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     }
     hooks.showChapter(run.chapterIndex);
     hooks.renderChapter(run.sentences);
-    mediaSession.setMetadata(bookStore.opened.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
+    mediaSession.setMetadata(chapterTitle(bookStore.opened.chapters[run.chapterIndex]));
     highlight(first.startSentence);
     persistPosition("chapter swap");
     dropFarSegments();
@@ -762,7 +763,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       applyPlaybackRate();
       hooks.showChapter(chapterIndex);
       hooks.renderChapter(sentences);
-      mediaSession.setMetadata(bookStore.opened.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
+      mediaSession.setMetadata(chapterTitle(bookStore.opened.chapters[chapterIndex]));
       highlight(segment.startSentence);
       hooks.notifyChange();
       log("segment 1 started");

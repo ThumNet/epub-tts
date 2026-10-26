@@ -63,10 +63,9 @@ export interface ControlsView {
   welcomeVisible: boolean;
 }
 
-/** The title of the chapter with this index, without the "N. " prefix of the picker label. Empty when there is none. */
+/** The title of the chapter with this index, without the list number. Empty when there is none. */
 export function chapterNameText(chapters: ReadonlyArray<ChapterInfo>, index: number): string {
-  const label = chapters.find((c) => c.index === index)?.label ?? "";
-  return label.replace(/^\d+\. /, "");
+  return chapters.find((c) => c.index === index)?.title ?? "";
 }
 
 function voiceStatusText(voices: Snapshot["voices"], voiceId: string): string {

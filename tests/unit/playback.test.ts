@@ -66,7 +66,7 @@ const SENTENCES = [
 ];
 
 function openBook(bookStore: BookStore): OpenBook {
-  const book = { id: "b", chapters: [{ index: 0, label: "A" }, { index: 1, label: "B" }] } as unknown as OpenBook;
+  const book = { id: "b", chapters: [{ index: 0, label: "1. A", title: "A" }, { index: 1, label: "2. B", title: "B" }] } as unknown as OpenBook;
   Object.assign(bookStore, { opened: book });
   return book;
 }

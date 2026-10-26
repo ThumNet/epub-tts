@@ -51,7 +51,7 @@ function fakeBook(id = "b1", chapterCount = 3): OpenBook {
     id,
     title: "My Book",
     language: "en",
-    chapters: Array.from({ length: chapterCount }, (_, index) => ({ index, label: `${index + 1}. C` })),
+    chapters: Array.from({ length: chapterCount }, (_, index) => ({ index, label: `${index + 1}. C`, title: "C" })),
   };
 }
 

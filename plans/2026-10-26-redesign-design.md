@@ -617,3 +617,22 @@ Unchanged: error messages, "Downloading voice model", "Loading voice model and W
 Where the details went: the Diagnostics log keeps them. `segment M ready (A s audio, generated in G s, sentences a-b, S MB)` was already logged per segment. The chapter summary (`Chapter N generation done. ...`) is still logged. The buffering and regeneration log lines were already there. No log line was added, so nothing is duplicated.
 
 Tests: no unit or e2e test asserted the old status strings (e2e waits on log lines, which are unchanged). Added unit tests for `describeProgress` in `tests/unit/pure.test.ts`.
+
+## Step 10 result
+
+User feedback: the lock screen showed the numbered picker label ("10. CHAPTER ONE"). The number is the list position, and front matter counts. It clashed with the title.
+
+Decision: the lock screen and the header show the chapter title only. The picker keeps the numbered label.
+
+Changes:
+- `src/epub.ts`: `ChapterInfo` gains `title`. The title is trimmed. An empty or missing title becomes "(no title)". `label` stays "N. Title" for the picker.
+- `src/engine/pure.ts`: new `chapterTitle` helper. It returns the title, or "(no title)" when the chapter or the title is missing.
+- `src/engine/playback.ts`: both `setMetadata` call sites use `chapterTitle`. The lock screen shows the title with no list number. The old fallback "Chapter N" is gone.
+- `src/ui/view.ts`: `chapterNameText` returns the model title. The snapshot carries the full `ChapterInfo`, so the prefix stripping is gone.
+- `src/engine/pure.ts`: `describePosition` and `PositionLike` are deleted. They were dead code.
+
+Tests changed: `epub`, `pure`, `view`, `ui-state`, `book`, `library`, `playback` (all in `tests/unit/`). The `epub` tests cover a present title, a missing or empty title, and the numbered label. The `pure` tests cover `chapterTitle`.
+
+No e2e change was needed.
+
+Checks: typecheck passes with 0 cycles. 249 unit tests pass. 40 e2e tests pass.

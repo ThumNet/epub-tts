@@ -3,7 +3,10 @@ import type { Book, NavItem } from "epubjs";
 
 export interface ChapterInfo {
   index: number;
+  /** The picker label: the title with a list-position prefix, "N. Title". */
   label: string;
+  /** The chapter title alone. The header and the lock screen show this. */
+  title: string;
 }
 
 export interface OpenBook {
@@ -35,6 +38,15 @@ function stripHash(href: string): string {
   return hash === -1 ? href : href.slice(0, hash);
 }
 
+export const NO_TITLE = "(no title)";
+
+/** Build the chapter model from a list position and the raw table-of-contents label, if any. */
+export function chapterInfo(index: number, rawTitle: string | undefined): ChapterInfo {
+  const trimmed = rawTitle?.trim() ?? "";
+  const title = trimmed === "" ? NO_TITLE : trimmed;
+  return { index, label: `${index + 1}. ${title}`, title };
+}
+
 export async function openBook(file: File): Promise<OpenBook> {
   const data = await file.arrayBuffer();
   const book = ePub(data);
@@ -50,8 +62,7 @@ export async function openBook(file: File): Promise<OpenBook> {
       const target = stripHash(item.href);
       return target !== "" && (href === target || href.endsWith(`/${target}`) || target.endsWith(`/${href}`));
     });
-    const label = entry ? entry.label.trim() : "(no title)";
-    chapters.push({ index, label: `${index + 1}. ${label}` });
+    chapters.push(chapterInfo(index, entry?.label));
   }
 
   return {

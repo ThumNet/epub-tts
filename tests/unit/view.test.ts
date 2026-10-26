@@ -322,19 +322,17 @@ describe("deriveView: header and welcome", () => {
 
 describe("chapterNameText", () => {
   const chapters = [
-    { index: 0, label: "1. Cover" },
-    { index: 2, label: "3. Chapter Two" },
-    { index: 3, label: "4. (no title)" },
-    { index: 4, label: "5. 1. Intro" },
-    { index: 5, label: "Plain" },
+    { index: 0, label: "1. Cover", title: "Cover" },
+    { index: 2, label: "3. Chapter Two", title: "Chapter Two" },
+    { index: 3, label: "4. (no title)", title: "(no title)" },
+    { index: 4, label: "5. 1. Intro", title: "1. Intro" },
   ];
   it("finds the title by chapter index, not by position", () => {
     expect(chapterNameText(chapters, 2)).toBe("Chapter Two");
   });
-  it("removes only the picker prefix and keeps the no-title fallback", () => {
+  it("shows the title without the list number and keeps the no-title fallback", () => {
     expect(chapterNameText(chapters, 3)).toBe("(no title)");
     expect(chapterNameText(chapters, 4)).toBe("1. Intro");
-    expect(chapterNameText(chapters, 5)).toBe("Plain");
   });
   it("is empty for an unknown index or no chapters", () => {
     expect(chapterNameText(chapters, 1)).toBe("");
