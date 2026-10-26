@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampSpeed,
   describePosition,
+  describeProgress,
   farSegments,
   hasTextChapter,
   playingChapterIndex,
@@ -11,6 +12,16 @@ import {
   sentenceIn,
   stepSpeed,
 } from "../../src/engine/pure";
+
+describe("describeProgress", () => {
+  it("says preparing while nothing plays", () => {
+    expect(describeProgress(52, 341, false)).toBe("Preparing audio, sentence 52 of 341");
+  });
+
+  it("is plain once a segment is loaded", () => {
+    expect(describeProgress(52, 341, true)).toBe("Sentence 52 of 341");
+  });
+});
 
 describe("sentenceIn", () => {
   const segment = {

@@ -119,6 +119,11 @@ export function errorName(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
+/** Plain progress text for the status line. `done` is the 1-based number of the sentence just generated. */
+export function describeProgress(done: number, total: number, playing: boolean): string {
+  return playing ? `Sentence ${done} of ${total}` : `Preparing audio, sentence ${done} of ${total}`;
+}
+
 export interface PositionLike {
   bookTitle: string;
   chapterIndex: number;

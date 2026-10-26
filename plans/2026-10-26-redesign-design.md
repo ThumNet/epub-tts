@@ -598,3 +598,22 @@ User feedback: "Chapter 10, 3 min ago" next to a header "10. CHAPTER ONE" confus
 - Unit: `chapterNameText` tests use numbered labels and cover the no-title fallback and the single-prefix strip. Saved-text test uses the new strings.
 - e2e: `#saved` matches `^Saved (just now|N min ago)$`. In the open test, `#chapter-name` must equal `Chapter Two` exactly and the checked `#chapter` option must match `N. Chapter Two`. The existing "name changes after a chapter pick" check stays.
 - `plans/step8.tmp` is a stray empty-ish file from attempt 1. Please delete it.
+
+## Step 9 result
+
+User feedback: the status line read "Chapter 10, segment 3: sentence 52/341. Generated 34.5 s for 185.1 s of audio." "Chapter 10" is the list index and contradicts the header. The line also read like a developer log.
+
+New helper `describeProgress(done, total, playing)` in `src/engine/pure.ts`. "playing" is true when the chapter being generated is the loaded chapter (`loaded?.segments === segments`).
+
+Strings changed (all in `src/engine/playback.ts`):
+- Generation progress: `Chapter N, segment M: sentence X/Y. Generated G s for A s of audio.` -> `Preparing audio, sentence X of Y` (nothing loaded yet) or `Sentence X of Y` (segment loaded).
+- Buffering: `Buffering: waiting for the first segment of chapter N...` / `Buffering: waiting for segment M...` -> `Preparing the next chapter...` / `Preparing the next part...`.
+- Regeneration start: `Regenerating segment M...` -> `Preparing the audio again...`.
+- Regeneration done: `Segment M regenerated.` -> `Audio is ready again.`.
+- Chapter done: `Chapter N generation done. K segments, audio A s, generation G s, RTF R.` -> `Audio for this chapter is ready.`.
+
+Unchanged: error messages, "Downloading voice model", "Loading voice model and WASM...", "Jumping to sentence N...", "End of book. Generation done.", "This chapter has no text...".
+
+Where the details went: the Diagnostics log keeps them. `segment M ready (A s audio, generated in G s, sentences a-b, S MB)` was already logged per segment. The chapter summary (`Chapter N generation done. ...`) is still logged. The buffering and regeneration log lines were already there. No log line was added, so nothing is duplicated.
+
+Tests: no unit or e2e test asserted the old status strings (e2e waits on log lines, which are unchanged). Added unit tests for `describeProgress` in `tests/unit/pure.test.ts`.
