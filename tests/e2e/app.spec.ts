@@ -28,11 +28,22 @@ test("startup: quiet page, version footer, five voices, Kristin by default", asy
   );
   for (const value of values) expect(value.toLowerCase()).not.toContain("lessac");
   await expect(page.locator("#voice")).toHaveValue("en_US-kristin-medium");
+  await expect(page.locator("#welcome")).toBeVisible();
+  await expect(page.locator("#welcome label[for=file]")).toHaveText("Open an EPUB");
+  await expect(page.locator("#text")).toBeHidden();
 });
 
 test("open and remember: chapters, restore after reload, forget", async ({ page }) => {
   await openApp(page);
   await pickBook(page);
+  await expect(page.locator("#welcome")).toBeHidden();
+  await expect(page.locator("#title")).toHaveText(BOOK_TITLE);
+  await expect(page.locator("#chapter-name")).not.toHaveText("");
+  const firstName = await page.locator("#chapter-name").innerText();
+  await page.locator("#chapter").selectOption("2");
+  await expect(page.locator("#chapter-name")).not.toHaveText(firstName);
+  await expect(page.locator("#chapter-name")).toHaveText(/Chapter Two$/);
+  await page.locator("#chapter").selectOption("1");
   await expect(page.locator("#book")).toContainText(BOOK_TITLE);
   await expect(page.locator("#chapter")).toContainText("Chapter One");
   await expect(page.locator("#chapter")).toContainText("Chapter Three");

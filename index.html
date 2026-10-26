@@ -14,21 +14,49 @@
     <title>epub-tts</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
-  <body>
-    <h1>epub-tts</h1>
+  <body data-book="none">
+    <main class="screen">
+      <div id="welcome" class="welcome">
+        <h1>epub-tts</h1>
+        <p>Listen to any EPUB, read aloud on your device.</p>
+        <label class="open-button" for="file">Open an EPUB</label>
+      </div>
 
-    <section>
-      <div id="saved">No saved position.</div>
-      <label for="file">1. Pick an EPUB file</label>
-      <input id="file" type="file" accept=".epub,application/epub+zip" />
+      <div class="reader">
+        <header>
+          <div id="title" class="title"></div>
+          <div id="chapter-name" class="chapter-name"></div>
+        </header>
+        <div id="text"></div>
+        <div id="stats">Idle.</div>
+        <div class="controls">
+          <div id="saved">No saved position.</div>
+          <div class="row">
+            <button id="generate" disabled>Generate chapter audio</button>
+            <button id="cancel" disabled>Cancel</button>
+            <button id="resume" disabled>Resume saved position</button>
+          </div>
+          <audio id="audio" controls preload="auto"></audio>
+        </div>
+      </div>
+    </main>
+
+    <section id="sheet-book">
+      <h2>Book and chapters</h2>
+      <label class="open-button secondary" for="file">Open another book</label>
+      <input id="file" class="visually-hidden" type="file" accept=".epub,application/epub+zip" />
       <div id="book"></div>
       <button id="forget-book" type="button" hidden>Forget this book</button>
-      <label for="chapter">2. Pick a chapter</label>
+      <label for="chapter">Chapter</label>
       <div class="row">
         <button id="chapter-prev" type="button" aria-label="Previous chapter" title="Previous chapter" disabled>&#9664; Prev</button>
         <select id="chapter" disabled></select>
         <button id="chapter-next" type="button" aria-label="Next chapter" title="Next chapter" disabled>Next &#9654;</button>
       </div>
+    </section>
+
+    <section id="sheet-voice">
+      <h2>Voice and speed</h2>
       <label for="voice">Voice</label>
       <select id="voice"></select>
       <div class="row">
@@ -37,23 +65,12 @@
         <button id="voice-remove" type="button" disabled>Remove</button>
       </div>
       <div class="row">
-        <button id="generate" disabled>3. Generate chapter audio</button>
-        <button id="cancel" disabled>Cancel</button>
-        <button id="resume" disabled>Resume saved position</button>
-      </div>
-      <div id="stats">Idle.</div>
-    </section>
-
-    <section>
-      <audio id="audio" controls preload="auto"></audio>
-      <div class="row">
         <span>Speed</span>
         <button id="speed-down" type="button" aria-label="Slower" title="Slower">&minus;</button>
         <span id="speed-label">1.00x</span>
         <button id="speed-up" type="button" aria-label="Faster" title="Faster">+</button>
         <button id="speed-reset" type="button">Reset to 1x</button>
       </div>
-      <div id="text"></div>
     </section>
 
     <section>

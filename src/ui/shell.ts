@@ -5,7 +5,7 @@ import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
-import { deriveView, type ControlsView, type Snapshot } from "./view";
+import { chapterNameText, deriveView, type ControlsView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -78,6 +78,8 @@ export function createShell(): Shell {
   const statsElement = byId("stats", HTMLDivElement);
   const savedElement = byId("saved", HTMLDivElement);
   const textElement = byId("text", HTMLDivElement);
+  const titleElement = byId("title", HTMLDivElement);
+  const chapterNameElement = byId("chapter-name", HTMLDivElement);
   const audio = byId("audio", HTMLAudioElement);
 
   const ui = createUiState();
@@ -106,6 +108,7 @@ export function createShell(): Shell {
     }
     chapterSelect.disabled = !ui.chaptersEnabled;
     chapterSelect.value = ui.chapterValue;
+    chapterNameElement.textContent = chapterNameText(ui.chapters, ui.selectedChapter);
   }
 
   /** The saved text includes the age of the save, so only `refreshSavedUi` draws it. */
@@ -133,6 +136,8 @@ export function createShell(): Shell {
     voiceDownloadButton.disabled = view.voiceDownloadDisabled;
     voiceRemoveButton.disabled = view.voiceRemoveDisabled;
     voiceStatus.textContent = view.voiceStatusText;
+    titleElement.textContent = view.titleText;
+    document.body.dataset["book"] = view.welcomeVisible ? "none" : "open";
   }
 
   /** What `notifyChange` draws: the controls, then the settings view. Before `bind` there is no engine to read. */
@@ -413,6 +418,7 @@ export function createShell(): Shell {
       // The user pick is now state, so the next render writes back the same value.
       ui.chapterValue = chapterSelect.value;
       ui.selectedChapter = Number(chapterSelect.value);
+      drawChapters();
       // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());

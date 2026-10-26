@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveView, type Snapshot } from "../../src/ui/view";
+import { chapterNameText, deriveView, type Snapshot } from "../../src/ui/view";
 
 const NOW = 100_000;
 
@@ -223,5 +223,32 @@ describe("deriveView: speed", () => {
 describe("deriveView: voice value", () => {
   it("is the voice id from settings", () => {
     expect(deriveView(snap({ settings: { voiceId: "en_US-ryan-high", speed: 1 } })).voiceValue).toBe("en_US-ryan-high");
+  });
+});
+
+describe("deriveView: header and welcome", () => {
+  it("shows the book title and hides the welcome when a book is open", () => {
+    const view = deriveView(snap());
+    expect(view.titleText).toBe("Book A");
+    expect(view.welcomeVisible).toBe(false);
+  });
+  it("shows the welcome and no title without a book", () => {
+    const view = deriveView(snap({ book: undefined }));
+    expect(view.titleText).toBe("");
+    expect(view.welcomeVisible).toBe(true);
+  });
+});
+
+describe("chapterNameText", () => {
+  const chapters = [
+    { index: 0, label: "Cover" },
+    { index: 2, label: "Chapter Two" },
+  ];
+  it("finds the label by chapter index, not by position", () => {
+    expect(chapterNameText(chapters, 2)).toBe("Chapter Two");
+  });
+  it("is empty for an unknown index or no chapters", () => {
+    expect(chapterNameText(chapters, 1)).toBe("");
+    expect(chapterNameText([], 0)).toBe("");
   });
 });

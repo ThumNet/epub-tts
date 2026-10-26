@@ -47,7 +47,7 @@
 
 body {
   margin: 0;
-  padding: var(--space-3);
+  padding: 0 max(var(--space-4), env(safe-area-inset-right)) var(--space-3) max(var(--space-4), env(safe-area-inset-left));
   max-width: 42rem;
   margin-inline: auto;
   background: var(--bg);
@@ -59,6 +59,119 @@ body {
 h1 {
   font-size: 1.1rem;
   margin: 0 0 var(--space-2);
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 0 0 var(--space-2);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.screen {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-top: max(var(--space-2), env(safe-area-inset-top));
+}
+
+.reader {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.welcome {
+  flex: 1;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  text-align: center;
+}
+
+.welcome h1 {
+  font-family: var(--font-read);
+  font-size: 2.25rem;
+  margin: 0;
+}
+
+.welcome p {
+  margin: 0;
+  max-width: 28ch;
+}
+
+body[data-book="none"] .welcome {
+  display: flex;
+}
+
+body[data-book="none"] .reader {
+  display: none;
+}
+
+.open-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64px;
+  margin: 0;
+  padding: 0 2rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.open-button.secondary {
+  min-height: 44px;
+  font-size: 1rem;
+  font-weight: normal;
+  padding: 0 var(--space-4);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+header {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.title,
+.chapter-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.chapter-name {
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.controls {
+  padding: var(--space-3) 0 max(var(--space-3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+#saved {
+  font-size: 0.875rem;
+  color: var(--muted);
 }
 
 section {
@@ -141,8 +254,10 @@ audio {
 }
 
 #text {
-  max-height: 30vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: var(--space-3) 0;
   font-family: var(--font-read);
   font-size: 1.125rem;
   line-height: 1.6;
@@ -232,5 +347,8 @@ footer {
 }
 
 #stats {
+  padding-bottom: var(--space-1);
+  font-size: 0.875rem;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }

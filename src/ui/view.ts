@@ -1,6 +1,7 @@
 // Pure view derivation. No DOM access here, so the unit tests run in Node.
 import { SPEED_MAX, SPEED_MIN } from "../engine/config";
 import { describePosition } from "../engine/pure";
+import type { ChapterInfo } from "../epub";
 import type { PlaybackView } from "../engine/playback";
 import type { SavedPosition } from "../store";
 import { findVoice } from "../voices";
@@ -37,6 +38,13 @@ export interface ControlsView {
   speedLabel: string;
   speedDownDisabled: boolean;
   speedUpDisabled: boolean;
+  titleText: string;
+  welcomeVisible: boolean;
+}
+
+/** The label of the chapter with this index, or an empty string when there is none. */
+export function chapterNameText(chapters: ReadonlyArray<ChapterInfo>, index: number): string {
+  return chapters.find((c) => c.index === index)?.label ?? "";
 }
 
 function voiceStatusText(voices: Snapshot["voices"], voiceId: string): string {
@@ -75,5 +83,7 @@ export function deriveView(snapshot: Snapshot): ControlsView {
     speedLabel: `${settings.speed.toFixed(2)}x`,
     speedDownDisabled: settings.speed <= SPEED_MIN,
     speedUpDisabled: settings.speed >= SPEED_MAX,
+    titleText: book?.title ?? "",
+    welcomeVisible: !book,
   };
 }

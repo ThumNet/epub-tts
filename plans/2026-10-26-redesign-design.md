@@ -354,3 +354,26 @@ Ratios, from sRGB relative luminance (`#9a5a00` has L = 0.2126 x 0.3231 + 0.7152
 - Dark `--accent` `#f0a63a` on dark `--bg`: unchanged, 8.91:1 for the button text.
 
 All uses of `--accent` in light mode (button fill, link text, focus ring) are at least 4.5:1. The focus ring needs only 3:1. The current-sentence highlight uses `--highlight`, not `--accent`.
+
+## Step 2 result
+
+Files: `index.html`, `src/styles.css`, `src/ui/view.ts`, `src/ui/shell.ts`, `tests/unit/view.test.ts`, `tests/e2e/app.spec.ts`, this plan. `src/engine` is untouched.
+
+Layout: `body` no longer carries the card padding. `main.screen` is a 100dvh column (safe-area top, `100vh` fallback). Inside it, `.welcome` and `.reader` swap on `body[data-book]`. The reader holds `header` (`#title`, `#chapter-name`), `#text` (flex 1, scrolls inside), `#stats`, and the `.controls` bar. The bar holds `#saved`, the current `#generate`, `#cancel` and `#resume` buttons, and the native `#audio controls`. The bar has the bottom safe-area inset. The welcome shows the `<label for="file">` "Open an EPUB" styled as a large amber button (tokens reused, white on `#9a5a00` = 5.47:1).
+
+Below the screen, plain sections (not dialogs): `#sheet-book` (file label "Open another book", `#book`, `#forget-book`, `#chapter-prev`, `#chapter`, `#chapter-next`), `#sheet-voice` (voice, status, download, remove, all speed controls, ids kept) and Diagnostics. `#file` is now visually hidden (`.visually-hidden`).
+
+View: `deriveView` returns `titleText` (book title or "") and `welcomeVisible` (`!book`). New pure export `chapterNameText(chapters, index)`. It finds the label by `index`, not by position. `Snapshot` is unchanged, because the chapters live in `UiState`. Shell: `drawControls` writes `#title` and `body[data-book]`. `drawChapters` writes `#chapter-name`. Unit tests added for the title, the welcome flag and `chapterNameText`.
+
+e2e edits (no locator needed to move, because every moved element stays in the DOM and visible below the screen):
+- startup test: added the welcome assertions (`#welcome` visible, label text "Open an EPUB", `#text` hidden).
+- open-and-remember test: added `#welcome` hidden, `#title` = book title, `#chapter-name` not empty after opening.
+No other e2e line changed. Same 7 behaviours, 14 tests.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist` (CSS 4.94 kB). `npm test` 219 passed. `npm run build:e2e` OK. `npm run test:e2e` 14 passed, twice.
+
+Not checked visually: no screenshot was taken. The phone layout, the dark scheme, the safe-area insets, how the welcome and the sections below the 100dvh screen look, and the long-title ellipsis are unverified. The sections below the screen scroll the page for now. That is temporary until step 4.
+
+### Attempt 2
+
+Fix: the chapter `change` handler in `src/ui/shell.ts` now calls `drawChapters()` after it updates `ui.selectedChapter`. The idle branch only called `notifyChange()`, and `render()` does not draw `#chapter-name`. The draw sections are unchanged. Added an e2e assertion in the open-and-remember test: after opening a book, selecting chapter 2 while idle changes `#chapter-name` (it ends with "Chapter Two"). Labels carry a number prefix, for example "3. Chapter Two". typecheck (0 cycles), build, `npm test` (219), build:e2e and `npm run test:e2e` (14 passed, run twice after the fix) are green.
