@@ -339,3 +339,41 @@ Other writers: none. A grep of `src` finds the three `textContent` writes only i
 No unit tests added: there is no pure logic beyond assignment.
 
 Checks: `typecheck`, `build`, `build:e2e` pass. Unit 203 passed (13 files). e2e 14 of 14 twice, no e2e edits. `dist` has no "mock" and the same four assets.
+
+## Step 3 result
+
+Done. `UiState` has `selectedChapter: number` (initial 0). The select stays the owner of options. No behaviour change. Files: `src/ui/state.ts`, `src/ui/shell.ts`.
+
+Two helpers in `shell.ts`:
+
+- `applySelectedChapter()` writes `chapterSelect.value = String(ui.selectedChapter)` and then syncs back from the DOM.
+- `syncSelectedChapterFromDom()` sets `ui.selectedChapter = Number(chapterSelect.value)`. Step 4 removes it.
+
+Sites converted:
+
+| Old | New |
+|---|---|
+| hook `showChapter`: `chapterSelect.value = String(index)` | `ui.selectedChapter = index; applySelectedChapter()` |
+| hook `getSelectedChapter`: `Number(chapterSelect.value)` | `ui.selectedChapter` |
+| select `change` listener (engine read via the hook) | `syncSelectedChapterFromDom()` first, then the engine call |
+| generate click (engine read via the hook) | `syncSelectedChapterFromDom()` first, then `generateChapter` |
+| hook `fillChapters` | `syncSelectedChapterFromDom()` after the DOM fill |
+| hook `clearChapters` | `ui.selectedChapter = 0` |
+
+The resume click calls `hooks.showChapter`, so it is covered. Library preselect is also covered.
+
+DOM read-back syncs (the DOM-as-state leftovers for step 4):
+
+1. `applySelectedChapter()`, after each `showChapter` write.
+2. `change` listener.
+3. Generate click.
+4. `fillChapters`, after `replaceChildren`. The browser picks the first option.
+5. `clearChapters` sets 0 directly. This equals `Number("")`.
+
+`showChapter` call sites, out-of-range check:
+
+- `library.ts:77`: guarded by `opened.chapters[savedPosition.chapterIndex]`. Always in range.
+- `playback.ts` calls (544, 748, 952, 988, 1043): the index is a run, target or playing chapter index, so it should be in range. I did not prove this for every path.
+- Resume click in `shell.ts`: the saved index is not checked against the chapter list. It can be out of range if the saved position is stale. The read-back then gives 0, the same as the old code.
+
+Checks: `typecheck`, `build`, `build:e2e` pass. Unit 203 passed. e2e 14 of 14 twice, no e2e or engine edits. `dist` has no "mock". The `dist` assets are unchanged: worker, piper, ort.wasm and index. The only `Number(chapterSelect.value)` left in `src` is in `syncSelectedChapterFromDom()` (a comment in `hooks.ts` also mentions it).

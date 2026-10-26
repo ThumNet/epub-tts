@@ -93,6 +93,17 @@ export function createShell(): Shell {
     return boundEngine;
   }
 
+  /** Write the field to the select, then read back: a missing option leaves the select empty, which reads as 0. */
+  function applySelectedChapter(): void {
+    chapterSelect.value = String(ui.selectedChapter);
+    syncSelectedChapterFromDom();
+  }
+
+  // Step 4 removes this when the chapter list becomes state.
+  function syncSelectedChapterFromDom(): void {
+    ui.selectedChapter = Number(chapterSelect.value);
+  }
+
   // Engine-side DOM access goes through these synchronous hooks. Function declarations below are hoisted.
   const hooks: EngineHooks = {
     notifyChange: () => updateControls(),
@@ -101,7 +112,8 @@ export function createShell(): Shell {
       applyTexts();
     },
     showChapter: (index) => {
-      chapterSelect.value = String(index);
+      ui.selectedChapter = index;
+      applySelectedChapter();
     },
     renderChapter: (sentences) => renderText(sentences),
     highlight: (index) => {
@@ -115,7 +127,7 @@ export function createShell(): Shell {
     clearText: () => {
       textElement.replaceChildren();
     },
-    getSelectedChapter: () => Number(chapterSelect.value),
+    getSelectedChapter: () => ui.selectedChapter,
     setBookInfo: (text) => {
       ui.bookInfo = text;
       applyTexts();
@@ -127,10 +139,12 @@ export function createShell(): Shell {
     fillChapters: (chapters) => {
       chapterSelect.replaceChildren(...chapters.map((c) => new Option(c.label, String(c.index))));
       chapterSelect.disabled = false;
+      syncSelectedChapterFromDom();
     },
     clearChapters: () => {
       chapterSelect.replaceChildren();
       chapterSelect.disabled = true;
+      ui.selectedChapter = 0;
     },
     refreshSaved: () => refreshSavedUi(),
   };
@@ -374,6 +388,7 @@ export function createShell(): Shell {
     });
 
     chapterSelect.addEventListener("change", () => {
+      syncSelectedChapterFromDom();
       // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());
@@ -384,6 +399,7 @@ export function createShell(): Shell {
 
     generateButton.addEventListener("click", () => {
       if (voices.busy) return;
+      syncSelectedChapterFromDom();
       void playback.generateChapter(hooks.getSelectedChapter());
     });
 

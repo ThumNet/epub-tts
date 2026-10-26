@@ -3,8 +3,9 @@ export interface UiState {
   status: string;
   bookInfo: string;
   copyStatus: string;
+  selectedChapter: number;
 }
 
 export function createUiState(): UiState {
-  return { status: "Idle.", bookInfo: "", copyStatus: "" };
+  return { status: "Idle.", bookInfo: "", copyStatus: "", selectedChapter: 0 };
 }
