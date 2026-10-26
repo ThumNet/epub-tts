@@ -1,9 +1,11 @@
-import type { Sentence } from "../epub";
+import type { ChapterInfo, Sentence } from "../epub";
 import { log, logText } from "../log";
 import { loadPosition } from "../store";
-import { DEFAULT_VOICE_ID, VOICES, findVoice } from "../voices";
+import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
-import { clampSpeed, describePosition } from "../engine/pure";
+import { stepSpeed } from "../engine/pure";
+import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
+import { deriveView, type ControlsView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -61,7 +63,8 @@ export function createShell(): Shell {
   const voiceStatus = byId("voice-status", HTMLSpanElement);
   const voiceDownloadButton = byId("voice-download", HTMLButtonElement);
   const voiceRemoveButton = byId("voice-remove", HTMLButtonElement);
-  const speedInput = byId("speed", HTMLInputElement);
+  const speedDownButton = byId("speed-down", HTMLButtonElement);
+  const speedUpButton = byId("speed-up", HTMLButtonElement);
   const speedLabel = byId("speed-label", HTMLSpanElement);
   const speedResetButton = byId("speed-reset", HTMLButtonElement);
   const generateButton = byId("generate", HTMLButtonElement);
@@ -77,20 +80,81 @@ export function createShell(): Shell {
   const textElement = byId("text", HTMLDivElement);
   const audio = byId("audio", HTMLAudioElement);
 
+  const ui = createUiState();
+
   let boundEngine: ShellEngine | undefined;
   function engine(): ShellEngine {
     if (!boundEngine) throw new Error("Shell used before bind()");
     return boundEngine;
   }
 
+  let renderedChapters: ReadonlyArray<ChapterInfo> | undefined;
+  // All state-driven DOM writes live in the draw sections below. Each hook calls only the sections it drew before,
+  // because a wider draw would show engine state at moments when the old code left the element alone.
+
+  function drawTexts(): void {
+    statsElement.textContent = ui.status;
+    bookInfo.textContent = ui.bookInfo;
+    copyStatus.textContent = ui.copyStatus;
+  }
+
+  /** Options first, then the value. Rebuild the options only when the array changes, to keep focus and an open picker. */
+  function drawChapters(): void {
+    if (renderedChapters !== ui.chapters) {
+      chapterSelect.replaceChildren(...ui.chapters.map((c) => new Option(c.label, String(c.index))));
+      renderedChapters = ui.chapters;
+    }
+    chapterSelect.disabled = !ui.chaptersEnabled;
+    chapterSelect.value = ui.chapterValue;
+  }
+
+  /** The saved text includes the age of the save, so only `refreshSavedUi` draws it. */
+  function renderSaved(): void {
+    savedElement.textContent = deriveView(snapshot()).savedText;
+  }
+
+  function drawSettings(view: ControlsView): void {
+    voiceSelect.value = view.voiceValue;
+    speedLabel.textContent = view.speedLabel;
+    speedDownButton.disabled = view.speedDownDisabled;
+    speedUpButton.disabled = view.speedUpDisabled;
+  }
+
+  function drawControls(view: ControlsView): void {
+    generateButton.disabled = view.generateDisabled;
+    cancelButton.disabled = view.cancelDisabled;
+    resumeButton.disabled = view.resumeDisabled;
+    voiceSelect.disabled = view.voiceSelectDisabled;
+    forgetButton.hidden = view.forgetHidden;
+    forgetButton.disabled = view.forgetDisabled;
+    fileInput.disabled = view.fileInputDisabled;
+    prevChapterButton.disabled = view.prevDisabled;
+    nextChapterButton.disabled = view.nextDisabled;
+    voiceDownloadButton.disabled = view.voiceDownloadDisabled;
+    voiceRemoveButton.disabled = view.voiceRemoveDisabled;
+    voiceStatus.textContent = view.voiceStatusText;
+  }
+
+  /** What `notifyChange` draws: the controls, then the settings view. Before `bind` there is no engine to read. */
+  function render(): void {
+    if (!boundEngine) return;
+    const view = deriveView(snapshot());
+    drawControls(view);
+    drawSettings(view);
+  }
+
   // Engine-side DOM access goes through these synchronous hooks. Function declarations below are hoisted.
   const hooks: EngineHooks = {
-    notifyChange: () => updateControls(),
+    notifyChange: () => render(),
     setStatus: (text) => {
-      statsElement.textContent = text;
+      ui.status = text;
+      drawTexts();
     },
     showChapter: (index) => {
-      chapterSelect.value = String(index);
+      const next = chapterSelectState(ui.chapters, index);
+      ui.chapterValue = next.value;
+      ui.selectedChapter = next.selected;
+      drawChapters();
     },
     renderChapter: (sentences) => renderText(sentences),
     highlight: (index) => {
@@ -104,20 +168,29 @@ export function createShell(): Shell {
     clearText: () => {
       textElement.replaceChildren();
     },
-    getSelectedChapter: () => Number(chapterSelect.value),
+    getSelectedChapter: () => ui.selectedChapter,
     setBookInfo: (text) => {
-      bookInfo.textContent = text;
+      ui.bookInfo = text;
+      drawTexts();
     },
     appendBookInfo: (text) => {
-      bookInfo.textContent += text;
+      ui.bookInfo += text;
+      drawTexts();
     },
     fillChapters: (chapters) => {
-      chapterSelect.replaceChildren(...chapters.map((c) => new Option(c.label, String(c.index))));
-      chapterSelect.disabled = false;
+      ui.chapters = chapters;
+      ui.chaptersEnabled = true;
+      const next = filledChapterSelectState(chapters);
+      ui.chapterValue = next.value;
+      ui.selectedChapter = next.selected;
+      drawChapters();
     },
     clearChapters: () => {
-      chapterSelect.replaceChildren();
-      chapterSelect.disabled = true;
+      ui.chapters = [];
+      ui.chaptersEnabled = false;
+      ui.chapterValue = "";
+      ui.selectedChapter = 0;
+      drawChapters();
     },
     refreshSaved: () => refreshSavedUi(),
   };
@@ -146,20 +219,27 @@ export function createShell(): Shell {
     );
   }
 
+  /** Reads the live engine and browser values at call time. Nothing is cached. */
+  function snapshot(): Snapshot {
+    const { playback, voices, library, bookStore, settings } = engine();
+    const opened = bookStore.opened;
+    return {
+      playback: playback.view(),
+      voices: { busy: voices.busy, stored: voices.stored, message: voices.message, error: voices.error },
+      library: { busy: library.busy, remembered: library.remembered },
+      book: opened ? { id: opened.id, title: opened.title } : undefined,
+      settings: { voiceId: settings.voiceId, speed: settings.speed },
+      saved: loadPosition(),
+      paused: audio.paused,
+      now: Date.now(),
+    };
+  }
+
   // ---------------------------------------------------------------- saved position
 
   function refreshSavedUi(): void {
-    const { bookStore } = engine();
-    const saved = loadPosition();
-    if (!saved) {
-      savedElement.textContent = "No saved position.";
-    } else {
-      const matches = bookStore.opened?.id === saved.bookId;
-      savedElement.textContent = `${describePosition(saved, Date.now())} ${
-        matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
-      }`;
-    }
-    hooks.notifyChange();
+    renderSaved();
+    render();
   }
 
   function startPersistTimer(): void {
@@ -225,61 +305,19 @@ export function createShell(): Shell {
     return engine().settings.voiceId;
   }
 
-  function showSpeed(): void {
-    const { settings } = engine();
-    speedInput.value = String(settings.speed);
-    speedLabel.textContent = `${settings.speed.toFixed(2)}x`;
-  }
-
   function setSpeed(value: number, reason: string): void {
     const { settings, playback } = engine();
     settings.setSpeed(value);
     playback.applyPlaybackRate();
-    showSpeed();
+    drawSettings(deriveView(snapshot()));
     settings.persist();
     log(`speed set to ${settings.speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
   }
 
-  function updateControls(): void {
-    const { playback, voices, library, bookStore } = engine();
-    const view = playback.view();
-    const locked = view.generating || voices.busy || library.busy;
-    generateButton.disabled = locked || !bookStore.opened;
-    cancelButton.disabled = !view.generating;
-    const saved = loadPosition();
-    resumeButton.disabled = locked || !saved || bookStore.opened?.id !== saved.bookId;
-    voiceSelect.disabled = locked;
-    forgetButton.hidden = !library.remembered;
-    forgetButton.disabled = locked || library.busy || view.navigating || !audio.paused;
-    fileInput.disabled = library.busy;
-    prevChapterButton.disabled = voices.busy || library.busy || view.navigating || !view.hasPrev;
-    nextChapterButton.disabled = voices.busy || library.busy || view.navigating || !view.hasNext;
-    voiceDownloadButton.disabled = locked || voices.stored !== false;
-    voiceRemoveButton.disabled = locked || voices.stored !== true;
-    if (voices.busy) {
-      voiceStatus.textContent = voices.message;
-    } else if (voices.error) {
-      voiceStatus.textContent = voices.error;
-    } else if (voices.stored === undefined) {
-      voiceStatus.textContent = "Status unknown";
-    } else if (voices.stored) {
-      voiceStatus.textContent = "Downloaded";
-    } else {
-      const size = findVoice(selectedVoiceId())?.sizeMb ?? 61;
-      voiceStatus.textContent = `Not downloaded (about ${Math.round(size)} MB)`;
-    }
-  }
-
   function registerSettingsListeners(): void {
     const { settings, mediaSession, voices } = engine();
-    speedInput.addEventListener("input", () => {
-      const value = Number(speedInput.value);
-      if (Number.isFinite(value)) speedLabel.textContent = `${clampSpeed(value).toFixed(2)}x`;
-    });
-    speedInput.addEventListener("change", () => {
-      const value = Number(speedInput.value);
-      if (Number.isFinite(value)) setSpeed(value, "slider");
-    });
+    speedDownButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, -1), "slower"));
+    speedUpButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, 1), "faster"));
     speedResetButton.addEventListener("click", () => setSpeed(1, "reset"));
     audio.addEventListener("ratechange", () => {
       mediaSession.resetPositionState();
@@ -303,9 +341,8 @@ export function createShell(): Shell {
     if (rejectedVoice !== undefined) {
       log(`saved voice ${rejectedVoice} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
     }
-    voiceSelect.value = voiceId;
     playback.applyPlaybackRate();
-    showSpeed();
+    drawSettings(deriveView(snapshot()));
     settings.persist();
     log(`settings: voice=${voiceId} speed=${settings.speed.toFixed(2)}x`);
     hooks.notifyChange();
@@ -347,10 +384,12 @@ export function createShell(): Shell {
 
   let copyStatusTimer: number | undefined;
   function showCopyStatus(message: string): void {
-    copyStatus.textContent = message;
+    ui.copyStatus = message;
+    drawTexts();
     window.clearTimeout(copyStatusTimer);
     copyStatusTimer = window.setTimeout(() => {
-      copyStatus.textContent = "";
+      ui.copyStatus = "";
+      drawTexts();
     }, 2000);
   }
 
@@ -371,6 +410,9 @@ export function createShell(): Shell {
     });
 
     chapterSelect.addEventListener("change", () => {
+      // The user pick is now state, so the next render writes back the same value.
+      ui.chapterValue = chapterSelect.value;
+      ui.selectedChapter = Number(chapterSelect.value);
       // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());

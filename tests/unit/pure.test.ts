@@ -9,6 +9,7 @@ import {
   segmentForSentence,
   segmentsAhead,
   sentenceIn,
+  stepSpeed,
 } from "../../src/engine/pure";
 
 describe("sentenceIn", () => {
@@ -226,6 +227,24 @@ describe("clampSpeed and roundSpeed", () => {
     expect(roundSpeed(1.236)).toBe(1.24);
     expect(roundSpeed(0.1)).toBe(0.75);
     expect(roundSpeed(9)).toBe(2);
+  });
+});
+
+describe("stepSpeed", () => {
+  it("moves by 0.25 in both directions", () => {
+    expect(stepSpeed(1, 1)).toBe(1.25);
+    expect(stepSpeed(1, -1)).toBe(0.75);
+  });
+
+  it("clamps at both limits", () => {
+    expect(stepSpeed(2, 1)).toBe(2);
+    expect(stepSpeed(0.75, -1)).toBe(0.75);
+    expect(stepSpeed(1.9, 1)).toBe(2);
+  });
+
+  it("steps from an off-grid saved speed without snapping", () => {
+    expect(stepSpeed(1.35, 1)).toBe(1.6);
+    expect(stepSpeed(1.35, -1)).toBe(1.1);
   });
 });
 

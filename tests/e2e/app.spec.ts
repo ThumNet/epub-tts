@@ -72,7 +72,8 @@ test("generate and play: source, time, segment swap, highlight, speed", async ({
   await expect.poll(() => audioTime(page), FAST_POLL).toBeGreaterThan(0.3);
   await expect(page.locator("#text .current")).toBeVisible();
 
-  await page.locator("#speed").fill("1.5");
+  await page.locator("#speed-up").click();
+  await page.locator("#speed-up").click();
   await expect(page.locator("#speed-label")).toHaveText("1.50x");
   await expect.poll(() => audioRate(page)).toBe(1.5);
 
@@ -86,7 +87,8 @@ test("chapter navigation: next, previous, previous disabled on the first text ch
   await openApp(page);
   await pickBook(page);
   // Slow playback keeps chapter 1 playing during the whole test, so it never moves on by itself.
-  await page.locator("#speed").fill("0.75");
+  await page.locator("#speed-down").click();
+  await expect(page.locator("#speed-down")).toBeDisabled();
   await generateChapter(page, 1);
   await expect(page.locator("#text")).toContainText(sentenceText(1, 1));
   // The cover has no text, so Previous is disabled once the background scan has checked it.
@@ -108,7 +110,9 @@ test("chapter navigation: next, previous, previous disabled on the first text ch
 test("continuous playback: chapter 2 continues into chapter 3 and the book ends", async ({ page }) => {
   await openApp(page);
   await pickBook(page);
-  await page.locator("#speed").fill("2");
+  for (let press = 0; press < 4; press++) await page.locator("#speed-up").click();
+  await expect(page.locator("#speed-label")).toHaveText("2.00x");
+  await expect(page.locator("#speed-up")).toBeDisabled();
   await generateChapter(page, 2);
   // Only durable evidence. The log numbers are spine positions: Chapter Two is "chapter 3", Chapter Three is "chapter 4".
   await expect(log(page)).toContainText("generating chapter 3:");
@@ -122,7 +126,7 @@ test("continuous playback: chapter 2 continues into chapter 3 and the book ends"
 test("jump: a click on a sentence that is not generated yet restarts there", async ({ page }) => {
   await openApp(page);
   await pickBook(page);
-  await page.locator("#speed").fill("0.75");
+  await page.locator("#speed-down").click();
   await generateChapter(page, 1);
   // Sentence 10 (index 9). The generator is at most two segments ahead, so it is not generated yet.
   await page.locator('#text span[data-index="9"]').click();
