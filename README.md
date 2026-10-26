@@ -79,6 +79,10 @@ Other scripts:
 - `npm run build` checks the types and builds into `dist/`.
 - `npm run preview` serves `dist/` at `http://localhost:4173/epub-tts/`.
 
+### Development: unit tests and boundary check
+
+Run `npm test` to run the unit tests (Vitest, in Node, no DOM). The tests are in `tests/unit/`. `npm run typecheck` also runs `scripts/check-boundaries.mjs`. The script fails if a file in `src/engine/` uses the DOM or imports from `ui/` or `main`. It also fails if any import cycle exists in `src/`.
+
 ### Development: end-to-end tests
 
 The tests use Playwright on Chromium and Firefox. A mock speech worker replaces Piper, so the tests need no network and no voice download.
