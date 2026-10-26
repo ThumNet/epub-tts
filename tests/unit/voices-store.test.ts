@@ -102,16 +102,19 @@ describe("refresh", () => {
 describe("select", () => {
   it("persists, logs, resets the state and refreshes", async () => {
     library.stored.mockResolvedValue([ID]);
-    const { store, persistSettings } = setup();
+    const { store, persistSettings, notifyChange } = setup();
     await store.refresh();
     expect(store.stored).toBe(true);
+    notifyChange.mockClear();
     store.select();
     expect(persistSettings).toHaveBeenCalledTimes(1);
     expect(logged()).toContain(`voice selected: ${ID}. The worker switches before the next generation.`);
     expect(store.stored).toBeUndefined();
     expect(store.error).toBe("");
+    expect(notifyChange).toHaveBeenCalledTimes(1);
     await flush();
     expect(store.stored).toBe(true);
+    expect(notifyChange).toHaveBeenCalledTimes(2);
   });
 });
 

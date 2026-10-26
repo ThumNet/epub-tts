@@ -83,6 +83,7 @@ export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
       log(`voice selected: ${id}. The worker switches before the next generation.`);
       voiceStored = undefined;
       voiceError = "";
+      hooks.notifyChange();
       void refreshVoiceStatus();
     },
     startDownload(): void {

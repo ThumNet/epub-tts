@@ -507,3 +507,5 @@ Fix: `render()` is split into named sections in `src/ui/shell.ts`: `drawTexts()`
 Note for later, not fixed (engine is out of scope): `voices.select()` clears `stored` and `error` and starts an async refresh without notifying. Any later `notifyChange` while the lookup is pending shows "Status unknown". This exists at HEAD.
 
 Checks: `typecheck`, `build`, `npm test` (215 passed), `build:e2e` pass. e2e 14 of 14 twice. No e2e or engine edits.
+
+Update: the `voices.select()` oddity is now fixed in a separate commit. `select()` calls `hooks.notifyChange()` after clearing `stored` and `error`, before the lookup starts. This is a deliberate small behaviour change. The voice status shows "Status unknown" and the voice buttons disable right away when the voice changes, instead of after the lookup ends. No e2e test picks a voice, so none depends on the old timing.
