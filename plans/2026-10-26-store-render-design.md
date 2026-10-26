@@ -423,3 +423,26 @@ Fix: `UiState` has a new field `chapterValue`, the raw string written to the sel
 - Same-array refill: unchanged. The write still happens, and `chapterValue` is the first index, so the first option is selected as at HEAD.
 
 New unit tests prove an out-of-range index keeps the raw value `"99"` while `selected` is 0.
+
+## Step 5 result
+
+Done. One function, `applySettingsView(view)` in `src/ui/shell.ts`, writes the voice select value, the speed label and both speed buttons. No behaviour change. Files: `src/ui/view.ts`, `src/ui/shell.ts`, `tests/unit/view.test.ts`. No engine or e2e edits.
+
+Sites changed:
+
+- `ControlsView` has a new field `voiceValue` (= `settings.voiceId`).
+- `updateControls` calls `applySettingsView(view)` as its last line.
+- `showSpeed` is removed. `setSpeed` calls `applySettingsView(deriveView(snapshot()))` at the old `showSpeed` position.
+- `initSettings` replaces `voiceSelect.value = voiceId` and `showSpeed()` with one `applySettingsView(deriveView(snapshot()))`. It sits after `applyPlaybackRate()`, where `showSpeed()` was. Nothing reads the select between the two old positions (only `applyPlaybackRate`).
+
+Voice value, boot order:
+
+1. `updateControls` can run before `initSettings` only through hooks. In `main.ts`, `bind` runs before everything that could notify. `initSettings` runs at step 3 and the worker `onReady` and `library.restore` are asynchronous. A render before `initSettings` writes `voiceValue` (the default voice id) into a select with no options.
+2. A write of a value to a select with no matching option leaves no selection and `value` reads `""`. It throws nothing. `replaceChildren` in `initSettings` then adds the options and `settings.load()` and the write set the final value, as at HEAD.
+3. After `initSettings` the select equals `settings.voiceId` at HEAD and now. HEAD wrote `voiceId` from `settings.load()`. Now the write uses `settings.voiceId`, which `load()` sets to the same value.
+4. User pick: the browser sets the select, the `change` listener calls `settings.setVoiceId(select.value)` first, then `voices.select()`, which renders. The id comes from the option list, so `findVoice` accepts it and the state equals the pick. A render can not reset the pick.
+5. `setSpeed` now also writes the voice value. The select already equals the state there, so the write changes nothing.
+
+Speed: `settings.speed` changes only in `setSpeed` and `settings.load()` (through `initSettings`). Both draw the label and buttons at once. So every other render draws the same text and states that are already shown. The label and the button states come from the same `deriveView` fields as before.
+
+Checks: `typecheck`, `build`, `build:e2e` pass. Unit 215 passed (14 files, 1 new case). e2e 14 of 14 twice. `dist` has no "mock" and the same four assets.

@@ -33,6 +33,7 @@ export interface ControlsView {
   voiceRemoveDisabled: boolean;
   voiceStatusText: string;
   savedText: string;
+  voiceValue: string;
   speedLabel: string;
   speedDownDisabled: boolean;
   speedUpDisabled: boolean;
@@ -70,6 +71,7 @@ export function deriveView(snapshot: Snapshot): ControlsView {
     voiceRemoveDisabled: locked || voices.stored !== true,
     voiceStatusText: voiceStatusText(voices, settings.voiceId),
     savedText: savedText(saved, book, now),
+    voiceValue: settings.voiceId,
     speedLabel: `${settings.speed.toFixed(2)}x`,
     speedDownDisabled: settings.speed <= SPEED_MIN,
     speedUpDisabled: settings.speed >= SPEED_MAX,

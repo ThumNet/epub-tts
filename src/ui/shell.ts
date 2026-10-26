@@ -5,7 +5,7 @@ import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
-import { deriveView, type Snapshot } from "./view";
+import { deriveView, type ControlsView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -266,8 +266,8 @@ export function createShell(): Shell {
     return engine().settings.voiceId;
   }
 
-  function showSpeed(): void {
-    const view = deriveView(snapshot());
+  function applySettingsView(view: ControlsView): void {
+    voiceSelect.value = view.voiceValue;
     speedLabel.textContent = view.speedLabel;
     speedDownButton.disabled = view.speedDownDisabled;
     speedUpButton.disabled = view.speedUpDisabled;
@@ -277,7 +277,7 @@ export function createShell(): Shell {
     const { settings, playback } = engine();
     settings.setSpeed(value);
     playback.applyPlaybackRate();
-    showSpeed();
+    applySettingsView(deriveView(snapshot()));
     settings.persist();
     log(`speed set to ${settings.speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
   }
@@ -296,6 +296,7 @@ export function createShell(): Shell {
     voiceDownloadButton.disabled = view.voiceDownloadDisabled;
     voiceRemoveButton.disabled = view.voiceRemoveDisabled;
     voiceStatus.textContent = view.voiceStatusText;
+    applySettingsView(view);
   }
 
   function registerSettingsListeners(): void {
@@ -325,9 +326,8 @@ export function createShell(): Shell {
     if (rejectedVoice !== undefined) {
       log(`saved voice ${rejectedVoice} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
     }
-    voiceSelect.value = voiceId;
     playback.applyPlaybackRate();
-    showSpeed();
+    applySettingsView(deriveView(snapshot()));
     settings.persist();
     log(`settings: voice=${voiceId} speed=${settings.speed.toFixed(2)}x`);
     hooks.notifyChange();

@@ -219,3 +219,9 @@ describe("deriveView: speed", () => {
     expect(view.speedUpDisabled).toBe(false);
   });
 });
+
+describe("deriveView: voice value", () => {
+  it("is the voice id from settings", () => {
+    expect(deriveView(snap({ settings: { voiceId: "en_US-ryan-high", speed: 1 } })).voiceValue).toBe("en_US-ryan-high");
+  });
+});
