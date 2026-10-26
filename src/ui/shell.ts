@@ -1,10 +1,10 @@
-import type { Sentence } from "../epub";
+import type { ChapterInfo, Sentence } from "../epub";
 import { log, logText } from "../log";
 import { loadPosition } from "../store";
 import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
-import { createUiState } from "./state";
+import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
 import { deriveView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
@@ -93,15 +93,15 @@ export function createShell(): Shell {
     return boundEngine;
   }
 
-  /** Write the field to the select, then read back: a missing option leaves the select empty, which reads as 0. */
-  function applySelectedChapter(): void {
-    chapterSelect.value = String(ui.selectedChapter);
-    syncSelectedChapterFromDom();
-  }
-
-  // Step 4 removes this when the chapter list becomes state.
-  function syncSelectedChapterFromDom(): void {
-    ui.selectedChapter = Number(chapterSelect.value);
+  let renderedChapters: ReadonlyArray<ChapterInfo> | undefined;
+  /** Options first, then the value. Callers keep `ui.selectedChapter` valid for `ui.chapters`. */
+  function applyChapters(): void {
+    if (renderedChapters !== ui.chapters) {
+      chapterSelect.replaceChildren(...ui.chapters.map((c) => new Option(c.label, String(c.index))));
+      renderedChapters = ui.chapters;
+    }
+    chapterSelect.disabled = !ui.chaptersEnabled;
+    chapterSelect.value = ui.chapterValue;
   }
 
   // Engine-side DOM access goes through these synchronous hooks. Function declarations below are hoisted.
@@ -112,8 +112,10 @@ export function createShell(): Shell {
       applyTexts();
     },
     showChapter: (index) => {
-      ui.selectedChapter = index;
-      applySelectedChapter();
+      const next = chapterSelectState(ui.chapters, index);
+      ui.chapterValue = next.value;
+      ui.selectedChapter = next.selected;
+      applyChapters();
     },
     renderChapter: (sentences) => renderText(sentences),
     highlight: (index) => {
@@ -137,14 +139,19 @@ export function createShell(): Shell {
       applyTexts();
     },
     fillChapters: (chapters) => {
-      chapterSelect.replaceChildren(...chapters.map((c) => new Option(c.label, String(c.index))));
-      chapterSelect.disabled = false;
-      syncSelectedChapterFromDom();
+      ui.chapters = chapters;
+      ui.chaptersEnabled = true;
+      const next = filledChapterSelectState(chapters);
+      ui.chapterValue = next.value;
+      ui.selectedChapter = next.selected;
+      applyChapters();
     },
     clearChapters: () => {
-      chapterSelect.replaceChildren();
-      chapterSelect.disabled = true;
+      ui.chapters = [];
+      ui.chaptersEnabled = false;
+      ui.chapterValue = "";
       ui.selectedChapter = 0;
+      applyChapters();
     },
     refreshSaved: () => refreshSavedUi(),
   };
@@ -388,7 +395,7 @@ export function createShell(): Shell {
     });
 
     chapterSelect.addEventListener("change", () => {
-      syncSelectedChapterFromDom();
+      ui.selectedChapter = Number(chapterSelect.value);
       // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());
@@ -399,7 +406,6 @@ export function createShell(): Shell {
 
     generateButton.addEventListener("click", () => {
       if (voices.busy) return;
-      syncSelectedChapterFromDom();
       void playback.generateChapter(hooks.getSelectedChapter());
     });
 

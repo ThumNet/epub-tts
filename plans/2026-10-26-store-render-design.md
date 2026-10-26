@@ -377,3 +377,49 @@ DOM read-back syncs (the DOM-as-state leftovers for step 4):
 - Resume click in `shell.ts`: the saved index is not checked against the chapter list. It can be out of range if the saved position is stale. The read-back then gives 0, the same as the old code.
 
 Checks: `typecheck`, `build`, `build:e2e` pass. Unit 203 passed. e2e 14 of 14 twice, no e2e or engine edits. `dist` has no "mock". The `dist` assets are unchanged: worker, piper, ort.wasm and index. The only `Number(chapterSelect.value)` left in `src` is in `syncSelectedChapterFromDom()` (a comment in `hooks.ts` also mentions it).
+
+## Step 4 result
+
+Done. `UiState` has `chapters: ReadonlyArray<ChapterInfo>` (initial: one shared empty array) and `chaptersEnabled: boolean` (initial false). `syncSelectedChapterFromDom` is gone. No behaviour change. Files: `src/ui/state.ts`, `src/ui/shell.ts`, `tests/unit/ui-state.test.ts` (new). No engine or e2e edits.
+
+New pure helpers in `state.ts`:
+
+- `resolveSelectedChapter(chapters, index)`: the index if an option has it, else 0. It replaces the read-back (an unknown value read as `""`, so 0).
+- `firstChapterIndex(chapters)`: the first index, or 0. It matches the browser selecting the first option after a fill (`Number(first.value)` is `first.index`).
+
+Render function `applyChapters()` in `shell.ts`, in this order:
+
+1. If `ui.chapters` identity differs from the last rendered array, call `replaceChildren(...options)`. Options are `new Option(label, String(index))`.
+2. `chapterSelect.disabled = !ui.chaptersEnabled`.
+3. `chapterSelect.value = String(ui.selectedChapter)`.
+
+Sites converted:
+
+| Hook | New |
+|---|---|
+| `fillChapters` | `ui.chapters = chapters`, `chaptersEnabled = true`, `selectedChapter = firstChapterIndex(chapters)`, `applyChapters()` |
+| `clearChapters` | `ui.chapters = []` (new array, so identity changes), `chaptersEnabled = false`, `selectedChapter = 0`, `applyChapters()` |
+| `showChapter` | `selectedChapter = resolveSelectedChapter(ui.chapters, index)`, `applyChapters()` |
+| generate click | reads `ui.selectedChapter` (no DOM sync) |
+
+Disabled decision: I kept a `chaptersEnabled` boolean. The old `fillChapters` set `disabled = false` even for an empty array. Deriving `disabled` from `chapters.length === 0` would differ in that case.
+
+Note: step 3 of `applyChapters` always writes `value`, also when the options are not rebuilt. If `fillChapters` gets the same array again, the old code reset the selection to the first option. The write keeps the select equal to the state.
+
+Remaining `chapterSelect.value` reads in `src`: one, in the `change` listener (`Number(chapterSelect.value)`, the user's pick). The only other use is the write in `applyChapters`. `hooks.ts` mentions it in comments only.
+
+Tests: `tests/unit/ui-state.test.ts` (6 cases). Checks: `typecheck`, `build`, `build:e2e` pass. e2e 14 of 14 twice. `dist` has no "mock" and the same four assets.
+
+### Attempt 2
+
+The verifier found a change at HEAD: `showChapter(99)` with chapters `[0, 1]`. HEAD wrote `"99"` to the select. The select then had no selection and `selectedChapter` was 0. Attempt 1 wrote the resolved `"0"`, which selected the first option.
+
+Fix: `UiState` has a new field `chapterValue`, the raw string written to the select.
+
+- `showChapter(index)`: `chapterValue = String(index)`, `selectedChapter = resolveSelectedChapter(...)`. Both come from the pure `chapterSelectState`.
+- `fillChapters`: `chapterValue` is the first index as a string, or `""` for an empty list (`filledChapterSelectState`). `selectedChapter` is the first index, or 0.
+- `clearChapters`: `chapterValue = ""`, `selectedChapter = 0`.
+- `applyChapters()` writes `chapterSelect.value = ui.chapterValue`. A value that matches no option leaves no selection, as the HEAD write did.
+- Same-array refill: unchanged. The write still happens, and `chapterValue` is the first index, so the first option is selected as at HEAD.
+
+New unit tests prove an out-of-range index keeps the raw value `"99"` while `selected` is 0.
