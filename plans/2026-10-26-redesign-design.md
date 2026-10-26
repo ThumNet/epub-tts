@@ -485,3 +485,42 @@ Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings 
 Not checked visually: no screenshot. The control bar without the audio row (spacing under `#primary` and `#listen-start`) is unverified. Real iOS and Safari behaviour is unverified.
 
 iOS lock-screen risk: the media session is set up in `src/engine/media-session.ts` and does not need `controls`. I believe the lock screen and Control Center still show it, but I did not test this. Check on a phone that (1) the lock screen shows the title with play and pause, (2) the lock screen Play resumes and the button state follows, (3) audio plays with a `hidden` element, and (4) playback continues after the screen locks. If audio fails with `hidden`, a visually-hidden element is the fallback.
+
+## Step 6 result
+
+Files: `src/styles.css`, `src/ui/shell.ts`, `.gitignore`, `prototype/` (deleted). The engine is unchanged. Tests are unchanged. `real-shots.mjs` at the repo root is an untracked throwaway script for the orchestrator.
+
+Changes:
+- Safe areas: header (top), bottom bar and body (left, right) were already correct. The sheets now also pad left and right, for landscape.
+- Focus: the global `:focus-visible` rule (3px, `--focus-ring`, 2px offset) already covers buttons, selects and inputs. The page has no `<summary>` any more.
+- Reduced motion: `prefers-reduced-motion: reduce` removes the sheet slide animation and sets `scroll-behavior: auto`. No smooth scroll exists in the code.
+- Scroll: `src/ui/shell.ts` `highlight` now calls `scrollIntoView({ block: "center" })`. This is a visible change. I did not add `behavior: "smooth"`.
+- Touch: `-webkit-tap-highlight-color: transparent` on all elements. `touch-action: manipulation` on buttons, labels and `.open-button`. `overscroll-behavior: contain` on `dialog` and `#text` (`.sheet-body` had it).
+- Touch targets: header openers, Close, selects, speed and chapter buttons are all at least 44 px. The title and chapter name already truncate with an ellipsis. The header buttons already have accessible names.
+- Prototype: `prototype/` is removed. It stays in git history at commit 0e7e376 / 454c318. The `.gitignore` entry for its screenshots is removed. The mentions of the prototype in this record, `PLAN.md` and `docs/` are history and stay.
+
+Contrast (computed by hand from the token values, WCAG relative luminance, not by script). No token changed.
+
+| Pair | Light | Dark | Target |
+|---|---|---|---|
+| text / bg | 14.2 | 14.8 | 4.5 |
+| text / surface | 15.2 | 13.4 | 4.5 |
+| muted / bg | 5.29 | 6.63 | 4.5 |
+| muted / surface | 5.65 | 5.98 | 4.5 |
+| on-accent / accent | 5.47 | 8.9 | 4.5 |
+| accent (focus ring) / bg | 5.12 | 8.97 | 3 |
+| stop outline (text) / bg | 14.2 | 14.8 | 3 |
+| text / highlight | 12.5 | 9.25 | 4.5 |
+| danger / bg | 6.1 | 7.5 | 4.5 |
+| ok / surface | 5.13 | 9.1 | 4.5 |
+| select chevron / bg | 3.04 | 5.67 | 3 |
+
+Highlight against bg is about 1.1:1. The text on the highlight passes, so I left it. Button and input borders are about 1.3:1. Each control has a text or icon label, so I left them.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 233 passed. `npm run build:e2e` OK. `npm run test:e2e` 32 passed (Chromium and Firefox), one run.
+
+Not checked: the layout in a real browser or standalone PWA (no screenshot, `real-shots.mjs` was not run by me), the hand-computed ratios (no script), the focus ring look, reduced-motion behaviour, the centred sentence scroll, the safe-area insets on a real notch device, and real iOS and Safari behaviour. The script has no generating or Stop shot that is reliable, because the mock worker is fast. It saves "3-generating-or-start" right after the click as a best effort.
+
+### Attempt 2
+
+Bug: the reduced-motion block set `dialog[open] { animation: none; }`, but the later `dialog[open] { animation: slide-up }` has equal specificity and won. Fix: the slide animation now lives inside `@media (prefers-reduced-motion: no-preference)`, and the `animation: none` rule is gone. I chose this over moving the block to the end of the file because it does not depend on rule order, so a later edit cannot break it. The other rule in the reduced-motion block (`scroll-behavior: auto !important`) wins by `!important`, and no other rule overrides it. New e2e test: "sheets: the slide animation runs by default and is off with reduced motion" checks the computed `animation-name` (`slide-up`, then `none` with `reducedMotion: "reduce"`).

@@ -252,6 +252,20 @@ for (const name of ["book", "voice", "diagnostics"] as const) {
   });
 }
 
+test("sheets: the slide animation runs by default and is off with reduced motion", async ({ page }) => {
+  await openApp(page);
+  const animationName = () => sheetDialog(page, "voice").evaluate((element) => getComputedStyle(element).animationName);
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await openSheet(page, "voice");
+  expect(await animationName()).toBe("slide-up");
+  await closeSheet(page, "voice");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openSheet(page, "voice");
+  expect(await animationName()).toBe("none");
+});
+
 test("sheets: a click on the backdrop closes the sheet at a phone size", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openApp(page);

@@ -43,6 +43,18 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+label,
+.open-button {
+  touch-action: manipulation;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
 }
 
 body {
@@ -205,7 +217,8 @@ dialog {
   width: 100%;
   max-width: none;
   max-height: 85dvh;
-  padding: 0 0 env(safe-area-inset-bottom);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overscroll-behavior: contain;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -216,7 +229,12 @@ dialog {
 dialog[open] {
   display: flex;
   flex-direction: column;
-  animation: slide-up 0.25s ease-out;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  dialog[open] {
+    animation: slide-up 0.25s ease-out;
+  }
 }
 
 dialog::backdrop {
@@ -346,6 +364,7 @@ button {
   padding: 0 var(--space-4);
   background: var(--surface);
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 button:disabled {
@@ -407,6 +426,7 @@ button:disabled {
   font-family: var(--font-read);
   font-size: 1.125rem;
   line-height: 1.6;
+  overscroll-behavior: contain;
 }
 
 #text span {

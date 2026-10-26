@@ -173,7 +173,7 @@ export function createShell(): Shell {
       const span = textElement.querySelector(`span[data-index="${index}"]`);
       if (span) {
         span.classList.add("current");
-        span.scrollIntoView({ block: "nearest" });
+        span.scrollIntoView({ block: "center" });
       }
     },
     clearText: () => {
