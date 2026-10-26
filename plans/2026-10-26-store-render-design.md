@@ -446,3 +446,64 @@ Voice value, boot order:
 Speed: `settings.speed` changes only in `setSpeed` and `settings.load()` (through `initSettings`). Both draw the label and buttons at once. So every other render draws the same text and states that are already shown. The label and the button states come from the same `deriveView` fields as before.
 
 Checks: `typecheck`, `build`, `build:e2e` pass. Unit 215 passed (14 files, 1 new case). e2e 14 of 14 twice. `dist` has no "mock" and the same four assets.
+
+## Step 6 result
+
+Done. `render()` in `src/ui/shell.ts` is the one draw function. It replaces `applyTexts`, `applyChapters`, `applySettingsView` and `updateControls`. Every hook sets `ui` and calls `render()`. `notifyChange` is `render()`. Only `src/ui/shell.ts` changed. `view.ts` is unchanged, so no unit test changed. No engine or e2e edits.
+
+### Decision: saved text stays on its old trigger
+
+`describePosition(p, now)` includes the age of the save (`Math.round((now - p.savedAt) / 1000)` in `src/engine/pure.ts`). Drawing it on every render would update the text on every hook call. At HEAD it changed only at `refreshSavedUi` call sites. That is a behaviour change. So `renderSaved()` draws the saved text and `render()` does not call it. `refreshSavedUi` is `renderSaved(); render();`, the same order as HEAD (saved text, then `notifyChange`).
+
+### Field by field
+
+| Field | Old write sites | New trigger | Why the value is the same |
+|---|---|---|---|
+| status, bookInfo, copyStatus | `applyTexts` in their hooks and `showCopyStatus` | `render()` in the same hooks | The values come from `ui`. Only the hooks change `ui`, and each draws right after. Other renders write the value that is already shown. |
+| chapter options, disabled, value | `applyChapters` in `showChapter`, `fillChapters`, `clearChapters` | `render()` in the same hooks, and in every other render | Options keep the identity guard. `ui.chapterValue` and `ui.chaptersEnabled` change only in those hooks. One new site: the `change` listener now sets `ui.chapterValue = chapterSelect.value`. Without it, the next render would reset a user pick. |
+| generate, cancel, resume, voice select disabled, forget, file input, prev, next, voice download, voice remove, voice status | `updateControls` (via `notifyChange`) | `render()` | The hooks `setStatus`, `showChapter`, `setBookInfo`, `appendBookInfo`, `fillChapters`, `clearChapters` and `showCopyStatus` now also draw these fields. They are derived from live engine state. At these moments the value can differ from the last drawn one if the engine changed state since the last `notifyChange`. e2e passes, but this is not proven in general. See the risk below. |
+| voice select value, speed label, speed buttons | `applySettingsView` in `updateControls`, `setSpeed`, `initSettings` | `render()` | Same as the row above. `setSpeed` and `initSettings` call `render()` at the old position. |
+| saved text | `refreshSavedUi` | `renderSaved()`, only from `refreshSavedUi` | See the decision above. |
+
+Risk (the one the design names): the status and book hooks now also draw the controls. The engine calls them before an `await` or mid-operation. A control may show its new state a little earlier than at HEAD. The next `notifyChange` would have drawn the same state. I did not prove this for every call site.
+
+Pre-bind: `render()` draws only the `ui` fields while `boundEngine` is unset, so a hook that runs before `bind` behaves as at HEAD (it did not read the engine).
+
+`initSettings` now calls `render()` twice (at the old `applySettingsView` position, and where `notifyChange` was). The second is redundant but harmless.
+
+### Grep: assignments in `src/ui/shell.ts`
+
+`grep "\.(textContent|disabled|hidden|value) ="` finds:
+
+- Line 77: `versionElement.textContent` (version label, constant).
+- Lines 98-127: inside `render()`.
+- Line 131: `savedElement.textContent` inside `renderSaved()`.
+- Line 270: `span.textContent` in `renderText` (sentences).
+- Line 356: `area.value` (clipboard fallback textarea).
+- Line 389: `fileInput.value = ""` (file input reset).
+
+The voice option fill uses `replaceChildren`, so it does not match. No other site.
+
+Checks: `typecheck` (boundaries OK), `build`, `npm test` (215 passed), `build:e2e` pass. e2e 14 of 14 twice. `dist` has the same four assets and no "mock".
+
+### Attempt 2
+
+Attempt 1 failed review. Its `render()` drew everything on every hook. Example: the user picks a voice. `voices.select()` clears `stored` and `error` and starts an async lookup, with no notify (`voices-store.ts:84-86`). A later copy-status, "Reading EPUB..." or speed render then drew "Status unknown" and disabled both voice buttons. HEAD drew only the texts or only the settings view there.
+
+Fix: `render()` is split into named sections in `src/ui/shell.ts`: `drawTexts()`, `drawChapters()`, `drawControls(view)`, `drawSettings(view)`. `render()` (the `notifyChange` body) draws `drawControls` then `drawSettings`, as HEAD's `updateControls` did. Each hook calls only the section it called at HEAD. `renderSaved()` is unchanged. The pre-bind guard, the `ui.chapterValue` sync in the chapter `change` listener and the chapter options identity guard stay.
+
+| Hook or site | HEAD draw | New draw |
+|---|---|---|
+| `notifyChange` | `updateControls` (controls, then settings view) | `render()` = `drawControls`, `drawSettings` |
+| `setStatus` | `applyTexts` | `drawTexts` |
+| `setBookInfo`, `appendBookInfo` | `applyTexts` | `drawTexts` |
+| `showCopyStatus` (set and 2 s clear) | `applyTexts` | `drawTexts` |
+| `showChapter`, `fillChapters`, `clearChapters` | `applyChapters` | `drawChapters` |
+| `setSpeed` | `applySettingsView` at the same position (rate, draw, persist, log) | `drawSettings` at the same position |
+| `initSettings` | `applySettingsView`, persist, log, `hooks.notifyChange()` | `drawSettings`, persist, log, `hooks.notifyChange()` (one render, as HEAD) |
+| `refreshSavedUi` | saved text, then `notifyChange` | `renderSaved()`, then `render()` |
+| `audio` play and pause, chapter `change` when idle | `notifyChange` | `notifyChange` (unchanged) |
+
+Note for later, not fixed (engine is out of scope): `voices.select()` clears `stored` and `error` and starts an async refresh without notifying. Any later `notifyChange` while the lookup is pending shows "Status unknown". This exists at HEAD.
+
+Checks: `typecheck`, `build`, `npm test` (215 passed), `build:e2e` pass. e2e 14 of 14 twice. No e2e or engine edits.

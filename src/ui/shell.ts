@@ -81,11 +81,6 @@ export function createShell(): Shell {
   const audio = byId("audio", HTMLAudioElement);
 
   const ui = createUiState();
-  function applyTexts(): void {
-    statsElement.textContent = ui.status;
-    bookInfo.textContent = ui.bookInfo;
-    copyStatus.textContent = ui.copyStatus;
-  }
 
   let boundEngine: ShellEngine | undefined;
   function engine(): ShellEngine {
@@ -94,8 +89,17 @@ export function createShell(): Shell {
   }
 
   let renderedChapters: ReadonlyArray<ChapterInfo> | undefined;
-  /** Options first, then the value. Callers keep `ui.selectedChapter` valid for `ui.chapters`. */
-  function applyChapters(): void {
+  // All state-driven DOM writes live in the draw sections below. Each hook calls only the sections it drew before,
+  // because a wider draw would show engine state at moments when the old code left the element alone.
+
+  function drawTexts(): void {
+    statsElement.textContent = ui.status;
+    bookInfo.textContent = ui.bookInfo;
+    copyStatus.textContent = ui.copyStatus;
+  }
+
+  /** Options first, then the value. Rebuild the options only when the array changes, to keep focus and an open picker. */
+  function drawChapters(): void {
     if (renderedChapters !== ui.chapters) {
       chapterSelect.replaceChildren(...ui.chapters.map((c) => new Option(c.label, String(c.index))));
       renderedChapters = ui.chapters;
@@ -104,18 +108,53 @@ export function createShell(): Shell {
     chapterSelect.value = ui.chapterValue;
   }
 
+  /** The saved text includes the age of the save, so only `refreshSavedUi` draws it. */
+  function renderSaved(): void {
+    savedElement.textContent = deriveView(snapshot()).savedText;
+  }
+
+  function drawSettings(view: ControlsView): void {
+    voiceSelect.value = view.voiceValue;
+    speedLabel.textContent = view.speedLabel;
+    speedDownButton.disabled = view.speedDownDisabled;
+    speedUpButton.disabled = view.speedUpDisabled;
+  }
+
+  function drawControls(view: ControlsView): void {
+    generateButton.disabled = view.generateDisabled;
+    cancelButton.disabled = view.cancelDisabled;
+    resumeButton.disabled = view.resumeDisabled;
+    voiceSelect.disabled = view.voiceSelectDisabled;
+    forgetButton.hidden = view.forgetHidden;
+    forgetButton.disabled = view.forgetDisabled;
+    fileInput.disabled = view.fileInputDisabled;
+    prevChapterButton.disabled = view.prevDisabled;
+    nextChapterButton.disabled = view.nextDisabled;
+    voiceDownloadButton.disabled = view.voiceDownloadDisabled;
+    voiceRemoveButton.disabled = view.voiceRemoveDisabled;
+    voiceStatus.textContent = view.voiceStatusText;
+  }
+
+  /** What `notifyChange` draws: the controls, then the settings view. Before `bind` there is no engine to read. */
+  function render(): void {
+    if (!boundEngine) return;
+    const view = deriveView(snapshot());
+    drawControls(view);
+    drawSettings(view);
+  }
+
   // Engine-side DOM access goes through these synchronous hooks. Function declarations below are hoisted.
   const hooks: EngineHooks = {
-    notifyChange: () => updateControls(),
+    notifyChange: () => render(),
     setStatus: (text) => {
       ui.status = text;
-      applyTexts();
+      drawTexts();
     },
     showChapter: (index) => {
       const next = chapterSelectState(ui.chapters, index);
       ui.chapterValue = next.value;
       ui.selectedChapter = next.selected;
-      applyChapters();
+      drawChapters();
     },
     renderChapter: (sentences) => renderText(sentences),
     highlight: (index) => {
@@ -132,11 +171,11 @@ export function createShell(): Shell {
     getSelectedChapter: () => ui.selectedChapter,
     setBookInfo: (text) => {
       ui.bookInfo = text;
-      applyTexts();
+      drawTexts();
     },
     appendBookInfo: (text) => {
       ui.bookInfo += text;
-      applyTexts();
+      drawTexts();
     },
     fillChapters: (chapters) => {
       ui.chapters = chapters;
@@ -144,14 +183,14 @@ export function createShell(): Shell {
       const next = filledChapterSelectState(chapters);
       ui.chapterValue = next.value;
       ui.selectedChapter = next.selected;
-      applyChapters();
+      drawChapters();
     },
     clearChapters: () => {
       ui.chapters = [];
       ui.chaptersEnabled = false;
       ui.chapterValue = "";
       ui.selectedChapter = 0;
-      applyChapters();
+      drawChapters();
     },
     refreshSaved: () => refreshSavedUi(),
   };
@@ -199,8 +238,8 @@ export function createShell(): Shell {
   // ---------------------------------------------------------------- saved position
 
   function refreshSavedUi(): void {
-    savedElement.textContent = deriveView(snapshot()).savedText;
-    hooks.notifyChange();
+    renderSaved();
+    render();
   }
 
   function startPersistTimer(): void {
@@ -266,37 +305,13 @@ export function createShell(): Shell {
     return engine().settings.voiceId;
   }
 
-  function applySettingsView(view: ControlsView): void {
-    voiceSelect.value = view.voiceValue;
-    speedLabel.textContent = view.speedLabel;
-    speedDownButton.disabled = view.speedDownDisabled;
-    speedUpButton.disabled = view.speedUpDisabled;
-  }
-
   function setSpeed(value: number, reason: string): void {
     const { settings, playback } = engine();
     settings.setSpeed(value);
     playback.applyPlaybackRate();
-    applySettingsView(deriveView(snapshot()));
+    drawSettings(deriveView(snapshot()));
     settings.persist();
     log(`speed set to ${settings.speed.toFixed(2)}x (${reason}), playbackRate=${audio.playbackRate}`);
-  }
-
-  function updateControls(): void {
-    const view = deriveView(snapshot());
-    generateButton.disabled = view.generateDisabled;
-    cancelButton.disabled = view.cancelDisabled;
-    resumeButton.disabled = view.resumeDisabled;
-    voiceSelect.disabled = view.voiceSelectDisabled;
-    forgetButton.hidden = view.forgetHidden;
-    forgetButton.disabled = view.forgetDisabled;
-    fileInput.disabled = view.fileInputDisabled;
-    prevChapterButton.disabled = view.prevDisabled;
-    nextChapterButton.disabled = view.nextDisabled;
-    voiceDownloadButton.disabled = view.voiceDownloadDisabled;
-    voiceRemoveButton.disabled = view.voiceRemoveDisabled;
-    voiceStatus.textContent = view.voiceStatusText;
-    applySettingsView(view);
   }
 
   function registerSettingsListeners(): void {
@@ -327,7 +342,7 @@ export function createShell(): Shell {
       log(`saved voice ${rejectedVoice} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);
     }
     playback.applyPlaybackRate();
-    applySettingsView(deriveView(snapshot()));
+    drawSettings(deriveView(snapshot()));
     settings.persist();
     log(`settings: voice=${voiceId} speed=${settings.speed.toFixed(2)}x`);
     hooks.notifyChange();
@@ -370,11 +385,11 @@ export function createShell(): Shell {
   let copyStatusTimer: number | undefined;
   function showCopyStatus(message: string): void {
     ui.copyStatus = message;
-    applyTexts();
+    drawTexts();
     window.clearTimeout(copyStatusTimer);
     copyStatusTimer = window.setTimeout(() => {
       ui.copyStatus = "";
-      applyTexts();
+      drawTexts();
     }, 2000);
   }
 
@@ -395,6 +410,8 @@ export function createShell(): Shell {
     });
 
     chapterSelect.addEventListener("change", () => {
+      // The user pick is now state, so the next render writes back the same value.
+      ui.chapterValue = chapterSelect.value;
       ui.selectedChapter = Number(chapterSelect.value);
       // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
       const view = playback.view();
