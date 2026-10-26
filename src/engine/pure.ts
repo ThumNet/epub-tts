@@ -119,17 +119,13 @@ export function errorName(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-export interface PositionLike {
-  bookTitle: string;
-  chapterIndex: number;
-  sentenceIndex: number;
-  seconds: number;
-  savedAt: number;
+/** Plain progress text for the status line. `done` is the 1-based number of the sentence just generated. */
+export function describeProgress(done: number, total: number, playing: boolean): string {
+  return playing ? `Sentence ${done} of ${total}` : `Preparing audio, sentence ${done} of ${total}`;
 }
 
-export function describePosition(p: PositionLike, now: number): string {
-  const minutes = Math.floor(p.seconds / 60);
-  const seconds = Math.floor(p.seconds % 60).toString().padStart(2, "0");
-  const ago = Math.round((now - p.savedAt) / 1000);
-  return `Saved: "${p.bookTitle}", chapter ${p.chapterIndex + 1}, sentence ${p.sentenceIndex + 1}, ${minutes}:${seconds} (${ago} s ago).`;
+/** The title for the lock screen. Never a list number. */
+export function chapterTitle(chapter: { title: string } | undefined): string {
+  const title = chapter?.title.trim() ?? "";
+  return title === "" ? "(no title)" : title;
 }

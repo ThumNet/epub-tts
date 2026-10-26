@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { chapterSelectState, createUiState, filledChapterSelectState, firstChapterIndex, resolveSelectedChapter } from "../../src/ui/state";
 
 const chapters = [
-  { index: 2, label: "Two" },
-  { index: 5, label: "Five" },
+  { index: 2, label: "3. Two", title: "Two" },
+  { index: 5, label: "6. Five", title: "Five" },
 ];
 
 describe("resolveSelectedChapter", () => {

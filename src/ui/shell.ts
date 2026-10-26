@@ -5,7 +5,8 @@ import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
-import { deriveView, type ControlsView, type Snapshot } from "./view";
+import { chapterNameText, deriveView, statusText, type ControlsView, type Snapshot } from "./view";
+import { initSheets, type Sheets } from "./sheets";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -67,9 +68,9 @@ export function createShell(): Shell {
   const speedUpButton = byId("speed-up", HTMLButtonElement);
   const speedLabel = byId("speed-label", HTMLSpanElement);
   const speedResetButton = byId("speed-reset", HTMLButtonElement);
-  const generateButton = byId("generate", HTMLButtonElement);
-  const cancelButton = byId("cancel", HTMLButtonElement);
-  const resumeButton = byId("resume", HTMLButtonElement);
+  const primaryButton = byId("primary", HTMLButtonElement);
+  const primaryLabel = byId("primary-label", HTMLSpanElement);
+  const listenStartButton = byId("listen-start", HTMLButtonElement);
   const copyLogButton = byId("copy-log", HTMLButtonElement);
   const copyStatus = byId("copy-status", HTMLSpanElement);
   const versionElement = byId("app-version", HTMLElement);
@@ -78,6 +79,8 @@ export function createShell(): Shell {
   const statsElement = byId("stats", HTMLDivElement);
   const savedElement = byId("saved", HTMLDivElement);
   const textElement = byId("text", HTMLDivElement);
+  const titleElement = byId("title", HTMLDivElement);
+  const chapterNameElement = byId("chapter-name", HTMLDivElement);
   const audio = byId("audio", HTMLAudioElement);
 
   const ui = createUiState();
@@ -93,7 +96,7 @@ export function createShell(): Shell {
   // because a wider draw would show engine state at moments when the old code left the element alone.
 
   function drawTexts(): void {
-    statsElement.textContent = ui.status;
+    statsElement.textContent = statusText(ui.status);
     bookInfo.textContent = ui.bookInfo;
     copyStatus.textContent = ui.copyStatus;
   }
@@ -106,9 +109,10 @@ export function createShell(): Shell {
     }
     chapterSelect.disabled = !ui.chaptersEnabled;
     chapterSelect.value = ui.chapterValue;
+    chapterNameElement.textContent = chapterNameText(ui.chapters, ui.selectedChapter);
   }
 
-  /** The saved text includes the age of the save, so only `refreshSavedUi` draws it. */
+  /** The saved text includes the age of the save, so only `refreshSavedUi` and a 30 s timer draw it. */
   function renderSaved(): void {
     savedElement.textContent = deriveView(snapshot()).savedText;
   }
@@ -121,9 +125,12 @@ export function createShell(): Shell {
   }
 
   function drawControls(view: ControlsView): void {
-    generateButton.disabled = view.generateDisabled;
-    cancelButton.disabled = view.cancelDisabled;
-    resumeButton.disabled = view.resumeDisabled;
+    primaryButton.dataset["state"] = view.primary.state;
+    primaryButton.disabled = view.primary.disabled;
+    primaryLabel.textContent = view.primary.label;
+    listenStartButton.hidden = view.secondaryHidden;
+    listenStartButton.disabled = view.secondaryDisabled;
+    savedElement.hidden = view.savedHidden;
     voiceSelect.disabled = view.voiceSelectDisabled;
     forgetButton.hidden = view.forgetHidden;
     forgetButton.disabled = view.forgetDisabled;
@@ -133,6 +140,10 @@ export function createShell(): Shell {
     voiceDownloadButton.disabled = view.voiceDownloadDisabled;
     voiceRemoveButton.disabled = view.voiceRemoveDisabled;
     voiceStatus.textContent = view.voiceStatusText;
+    titleElement.textContent = view.titleText;
+    document.body.dataset["book"] = view.welcomeVisible ? "none" : "open";
+    // Closing is a reaction to state. Render never opens a sheet. A Book sheet reopened during a pending Forget must not stay over the welcome.
+    if (view.welcomeVisible) sheets?.close("sheet-book");
   }
 
   /** What `notifyChange` draws: the controls, then the settings view. Before `bind` there is no engine to read. */
@@ -162,7 +173,7 @@ export function createShell(): Shell {
       const span = textElement.querySelector(`span[data-index="${index}"]`);
       if (span) {
         span.classList.add("current");
-        span.scrollIntoView({ block: "nearest" });
+        span.scrollIntoView({ block: "center" });
       }
     },
     clearText: () => {
@@ -230,6 +241,7 @@ export function createShell(): Shell {
       book: opened ? { id: opened.id, title: opened.title } : undefined,
       settings: { voiceId: settings.voiceId, speed: settings.speed },
       saved: loadPosition(),
+      loaded: playback.hasLoaded(),
       paused: audio.paused,
       now: Date.now(),
     };
@@ -247,6 +259,9 @@ export function createShell(): Shell {
     setInterval(() => {
       if (!audio.paused) playback.persistPosition("interval");
     }, SAVE_INTERVAL_MS);
+    setInterval(() => {
+      if (!savedElement.hidden) renderSaved();
+    }, 30_000);
   }
 
   // ---------------------------------------------------------------- page lifecycle logging
@@ -292,7 +307,7 @@ export function createShell(): Shell {
     const { playback } = engine();
     textElement.addEventListener("click", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement) || !playback.hasLoaded()) return;
+      if (!(target instanceof HTMLElement)) return;
       const index = Number(target.dataset["index"]);
       if (!Number.isInteger(index)) return;
       playback.clickSentence(index);
@@ -383,6 +398,7 @@ export function createShell(): Shell {
   }
 
   let copyStatusTimer: number | undefined;
+  let sheets: Sheets | undefined;
   function showCopyStatus(message: string): void {
     ui.copyStatus = message;
     drawTexts();
@@ -395,10 +411,13 @@ export function createShell(): Shell {
 
   function registerControlListeners(): void {
     const { library, playback, voices, bookStore } = engine();
+    sheets = initSheets();
+    const sheetControl = sheets;
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       // Clear the input so picking the same file again fires a new change event. The File object stays valid.
       fileInput.value = "";
+      if (file) sheetControl.close("sheet-book");
       library.pick(file);
     });
 
@@ -406,6 +425,7 @@ export function createShell(): Shell {
     audio.addEventListener("pause", () => hooks.notifyChange());
 
     forgetButton.addEventListener("click", () => {
+      sheetControl.close("sheet-book");
       library.forget();
     });
 
@@ -413,28 +433,55 @@ export function createShell(): Shell {
       // The user pick is now state, so the next render writes back the same value.
       ui.chapterValue = chapterSelect.value;
       ui.selectedChapter = Number(chapterSelect.value);
-      // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
+      drawChapters();
+      // While generating, a picked chapter behaves like Previous/Next. While idle it shows the chapter text without audio.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());
-      else hooks.notifyChange();
+      else {
+        hooks.notifyChange();
+        void playback.previewChapter(hooks.getSelectedChapter());
+      }
     });
     prevChapterButton.addEventListener("click", () => void playback.navigateChapter(-1, "button"));
     nextChapterButton.addEventListener("click", () => void playback.navigateChapter(1, "button"));
 
-    generateButton.addEventListener("click", () => {
+    function generateFromStart(): void {
       if (voices.busy) return;
       void playback.generateChapter(hooks.getSelectedChapter());
-    });
+    }
 
-    cancelButton.addEventListener("click", () => playback.cancelGeneration());
-
-    resumeButton.addEventListener("click", () => {
+    function resumeSaved(): void {
       const saved = loadPosition();
       if (!saved || bookStore.opened?.id !== saved.bookId || voices.busy) return;
       hooks.showChapter(saved.chapterIndex);
       log(`resuming at sentence ${saved.sentenceIndex + 1} with voice ${selectedVoiceId()}: generating from that sentence`);
       void playback.generateChapter(saved.chapterIndex, saved.sentenceIndex);
+    }
+
+    primaryButton.addEventListener("click", () => {
+      switch (deriveView(snapshot()).primary.state) {
+        case "stop":
+          playback.cancelGeneration();
+          break;
+        case "pause":
+          playback.pauseFromMediaSession();
+          break;
+        case "play":
+          playback.playFromMediaSession();
+          break;
+        case "resume":
+          resumeSaved();
+          break;
+        case "listen":
+          generateFromStart();
+          break;
+        case "open":
+          fileInput.click();
+          break;
+      }
     });
+
+    listenStartButton.addEventListener("click", generateFromStart);
 
     copyLogButton.addEventListener("click", () => {
       const text = diagnosticsText();

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { splitSentences } from "../../src/epub";
+import { chapterInfo, splitSentences } from "../../src/epub";
+
+describe("chapterInfo", () => {
+  it("keeps the trimmed title and numbers only the picker label", () => {
+    expect(chapterInfo(9, "  CHAPTER ONE ")).toEqual({ index: 9, label: "10. CHAPTER ONE", title: "CHAPTER ONE" });
+  });
+
+  it("falls back to (no title) for a missing or empty title", () => {
+    expect(chapterInfo(0, undefined)).toEqual({ index: 0, label: "1. (no title)", title: "(no title)" });
+    expect(chapterInfo(1, "   ")).toEqual({ index: 1, label: "2. (no title)", title: "(no title)" });
+  });
+});
 
 describe("splitSentences", () => {
   it("splits a paragraph into sentences and marks the paragraph end", () => {

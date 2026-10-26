@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#111111" />
+    <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="epub-tts" />
@@ -11,87 +12,113 @@
     <link rel="icon" href="%BASE_URL%icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="%BASE_URL%icon.svg" />
     <title>epub-tts</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      body { margin: 0; padding: 12px; background: #111; color: #eee; line-height: 1.5; }
-      h1 { font-size: 1.1rem; margin: 0 0 8px; }
-      section { margin: 12px 0; padding: 10px; background: #1b1b1b; border-radius: 8px; }
-      label { display: block; margin: 6px 0 2px; font-size: 0.85rem; color: #aaa; }
-      select, input, button { font: inherit; padding: 8px; margin: 2px 0; max-width: 100%; }
-      button { min-height: 44px; }
-      audio { width: 100%; margin-top: 8px; }
-      #text { max-height: 30vh; overflow-y: auto; }
-      #text span { cursor: pointer; }
-      #text span.current { background: #35507a; border-radius: 3px; }
-      #text p { margin: 0 0 0.6em; }
-      pre { margin: 0; font-size: 0.8rem; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; -webkit-overflow-scrolling: touch; }
-      details summary { cursor: pointer; font-weight: bold; min-height: 44px; display: flex; align-items: center; }
-      #copy-log { min-width: 120px; }
-      #chapter { flex: 1; min-width: 0; min-height: 44px; }
-      #chapter-prev, #chapter-next { min-width: 44px; min-height: 44px; }
-      #speed-down, #speed-up { min-width: 44px; min-height: 44px; }
-      #speed-label { min-width: 3.5em; font-variant-numeric: tabular-nums; }
-      #voice-status { font-size: 0.85rem; color: #aaa; }
-      #copy-status { font-size: 0.85rem; color: #8c8; }
-      footer { margin: 12px 0 0; font-size: 0.8rem; color: #888; text-align: center; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-      #stats { font-variant-numeric: tabular-nums; }
-    </style>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
-  <body>
-    <h1>epub-tts</h1>
+  <body data-book="none">
+    <main class="screen">
+      <header>
+        <div class="titles">
+          <div id="title" class="title"></div>
+          <div id="chapter-name" class="chapter-name"></div>
+        </div>
+        <button id="open-book" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Book" title="Book">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z" /><path d="M4 21V5" /></svg>
+        </button>
+        <button id="open-voice" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Voice and speed" title="Voice and speed">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9z" /><path d="M17 8a5 5 0 0 1 0 8" /></svg>
+        </button>
+        <button id="open-diagnostics" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Diagnostics" title="Diagnostics">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+        </button>
+      </header>
 
-    <section>
-      <div id="saved">No saved position.</div>
-      <label for="file">1. Pick an EPUB file</label>
-      <input id="file" type="file" accept=".epub,application/epub+zip" />
-      <div id="book"></div>
-      <button id="forget-book" type="button" hidden>Forget this book</button>
-      <label for="chapter">2. Pick a chapter</label>
-      <div class="row">
-        <button id="chapter-prev" type="button" aria-label="Previous chapter" title="Previous chapter" disabled>&#9664; Prev</button>
-        <select id="chapter" disabled></select>
-        <button id="chapter-next" type="button" aria-label="Next chapter" title="Next chapter" disabled>Next &#9654;</button>
+      <div id="welcome" class="welcome">
+        <h1>epub-tts</h1>
+        <p>Listen to any EPUB, read aloud on your device.</p>
+        <label class="open-button" for="file">Open an EPUB</label>
       </div>
-      <label for="voice">Voice</label>
-      <select id="voice"></select>
-      <div class="row">
+
+      <div class="reader">
+        <div id="text"></div>
+        <div class="controls">
+          <button id="primary" type="button" data-state="open" disabled>
+            <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.5v15l13-7.5z" /></svg>
+            <svg class="icon icon-pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z" /></svg>
+            <svg class="icon icon-stop" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 6h12v12H6z" /></svg>
+            <svg class="icon icon-resume" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.5 4v4.5H9" /></svg>
+            <span id="primary-label">Open an EPUB</span>
+          </button>
+          <div id="saved" hidden></div>
+          <button id="listen-start" type="button" class="secondary" hidden>Listen from chapter start</button>
+          <div id="stats"></div>
+          <audio id="audio" preload="auto" hidden></audio>
+        </div>
+      </div>
+    </main>
+
+    <input id="file" class="visually-hidden" type="file" accept=".epub,application/epub+zip" />
+
+    <dialog id="sheet-book" aria-labelledby="h-book">
+      <div class="sheet-head">
+        <h2 id="h-book">Book and chapters</h2>
+        <button class="sheet-close" type="button">Close</button>
+      </div>
+      <div class="sheet-body">
+        <div id="book"></div>
+        <label class="open-button secondary" for="file">Open another book</label>
+        <div class="field">
+          <label for="chapter">Chapter</label>
+          <select id="chapter" disabled></select>
+          <div class="row chapter-nav">
+            <button id="chapter-prev" type="button" disabled>Previous chapter</button>
+            <button id="chapter-next" type="button" disabled>Next chapter</button>
+          </div>
+        </div>
+        <button id="forget-book" type="button" hidden>Forget this book</button>
+      </div>
+    </dialog>
+
+    <dialog id="sheet-voice" aria-labelledby="h-voice">
+      <div class="sheet-head">
+        <h2 id="h-voice">Voice and speed</h2>
+        <button class="sheet-close" type="button">Close</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <label for="voice">Voice</label>
+          <select id="voice"></select>
+        </div>
         <span id="voice-status" role="status">Checking voice...</span>
-        <button id="voice-download" type="button" disabled>Download</button>
-        <button id="voice-remove" type="button" disabled>Remove</button>
+        <div class="row">
+          <button id="voice-download" type="button" disabled>Download</button>
+          <button id="voice-remove" type="button" disabled>Remove</button>
+        </div>
+        <div class="field">
+          <span>Speed</span>
+          <div class="speed">
+            <button id="speed-down" type="button" aria-label="Slower" title="Slower">&minus;</button>
+            <span id="speed-label">1.00x</span>
+            <button id="speed-up" type="button" aria-label="Faster" title="Faster">+</button>
+          </div>
+          <button id="speed-reset" type="button">Reset to 1x</button>
+        </div>
       </div>
-      <div class="row">
-        <button id="generate" disabled>3. Generate chapter audio</button>
-        <button id="cancel" disabled>Cancel</button>
-        <button id="resume" disabled>Resume saved position</button>
-      </div>
-      <div id="stats">Idle.</div>
-    </section>
+    </dialog>
 
-    <section>
-      <audio id="audio" controls preload="auto"></audio>
-      <div class="row">
-        <span>Speed</span>
-        <button id="speed-down" type="button" aria-label="Slower" title="Slower">&minus;</button>
-        <span id="speed-label">1.00x</span>
-        <button id="speed-up" type="button" aria-label="Faster" title="Faster">+</button>
-        <button id="speed-reset" type="button">Reset to 1x</button>
+    <dialog id="diagnostics" aria-labelledby="h-diag">
+      <div class="sheet-head">
+        <h2 id="h-diag">Diagnostics</h2>
+        <button class="sheet-close" type="button">Close</button>
       </div>
-      <div id="text"></div>
-    </section>
-
-    <section>
-      <details id="diagnostics">
-        <summary>Diagnostics</summary>
+      <div class="sheet-body">
         <div class="row">
           <button id="copy-log" type="button">Copy log</button>
           <span id="copy-status" role="status"></span>
         </div>
         <pre id="log"></pre>
-      </details>
-    </section>
-
-    <footer id="app-version"></footer>
+        <div id="app-version"></div>
+      </div>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

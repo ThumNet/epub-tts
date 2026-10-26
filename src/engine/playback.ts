@@ -18,6 +18,8 @@ import {
 import type { EngineHooks } from "./hooks";
 import type { MediaSessionController } from "./media-session";
 import {
+  chapterTitle,
+  describeProgress,
   errorName,
   farSegments,
   hasTextChapter as hasTextChapterIn,
@@ -88,6 +90,8 @@ export interface PlaybackDeps {
 export interface PlaybackView {
   generating: boolean;
   navigating: boolean;
+  /** The user's intent to hear audio. It stays true across the pause between two segments. */
+  wantPlaying: boolean;
   navigationBase: number;
   hasPrev: boolean;
   hasNext: boolean;
@@ -101,6 +105,11 @@ export interface Playback {
   unloadChapter(): void;
   navigateChapter(step: 1 | -1, source: string): Promise<void>;
   selectChapter(index: number): Promise<void>;
+  /**
+   * Show the text of a chapter without audio. `index` omitted means the first chapter with text, which is then
+   * selected. Does nothing while a generation runs or a chapter is loaded. A late result for an older call is dropped.
+   */
+  previewChapter(index?: number): Promise<void>;
   /** The click logic for a sentence index that the shell parsed from the DOM event. */
   clickSentence(index: number): void;
   /** Live: true while a chapter is loaded in the audio element. */
@@ -309,6 +318,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
 
   function playFromMediaSession(): void {
     wantPlaying = true;
+    // While buffering, audio is already paused, so no `play` event follows. Redraw for the new intent.
+    hooks.notifyChange();
     if (buffering) {
       // The segment ended and the next one is not ready. play() would replay the ended segment.
       log("play pressed while buffering: playback starts when the next segment is ready");
@@ -380,6 +391,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     wantPlaying = false;
     watchToken += 1;
     audio.pause();
+    // Pausing audio that is already paused (buffering between segments) fires no `pause` event.
+    hooks.notifyChange();
   }
 
   // ---------------------------------------------------------------- highlight
@@ -404,7 +417,10 @@ export function createPlayback(deps: PlaybackDeps): Playback {
 
   /** The body of the text click listener, after the shell parsed the sentence index from the event. */
   function clickSentence(index: number): void {
-    if (!loaded) return;
+    if (!loaded) {
+      startFromPreview(index);
+      return;
+    }
     const segmentIndex = segmentForSentence(loaded.segments, index);
     const segment = loaded.segments[segmentIndex];
     if (!segment) {
@@ -543,7 +559,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     }
     hooks.showChapter(run.chapterIndex);
     hooks.renderChapter(run.sentences);
-    mediaSession.setMetadata(bookStore.opened.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
+    mediaSession.setMetadata(chapterTitle(bookStore.opened.chapters[run.chapterIndex]));
     highlight(first.startSentence);
     persistPosition("chapter swap");
     dropFarSegments();
@@ -569,7 +585,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         buffering = true;
         const waitingFor = pendingChapter ? `the first segment of chapter ${pendingChapter.chapterIndex + 1}` : `segment ${nextIndex + 1}`;
         log(`buffering: ${waitingFor} is not ready yet`);
-        hooks.setStatus(`Buffering: waiting for ${waitingFor}...`);
+        hooks.setStatus(pendingChapter ? "Preparing the next chapter..." : "Preparing the next part...");
       } else {
         log("last segment ended");
       }
@@ -637,7 +653,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     }
     const task = (async (): Promise<boolean> => {
       log(`segment ${segmentIndex + 1} regenerating`);
-      hooks.setStatus(`Regenerating segment ${segmentIndex + 1}...`);
+      hooks.setStatus("Preparing the audio again...");
       const startedAt = performance.now();
       try {
         await workerClient.ensure(active.voiceId);
@@ -663,7 +679,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         segment.timings = joined.timings;
         segment.duration = joined.duration;
         log(`segment ${segmentIndex + 1} regenerated in ${((performance.now() - startedAt) / 1000).toFixed(1)} s`);
-        hooks.setStatus(`Segment ${segmentIndex + 1} regenerated.`);
+        hooks.setStatus("Audio is ready again.");
         return true;
       } catch (error) {
         if (error instanceof VoiceChangedError) {
@@ -747,7 +763,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       applyPlaybackRate();
       hooks.showChapter(chapterIndex);
       hooks.renderChapter(sentences);
-      mediaSession.setMetadata(bookStore.opened.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
+      mediaSession.setMetadata(chapterTitle(bookStore.opened.chapters[chapterIndex]));
       highlight(segment.startSentence);
       hooks.notifyChange();
       log("segment 1 started");
@@ -792,10 +808,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         seconds += clip.pcm.length / clip.sampleRate + gapMs / 1000;
         totalGenMs += genMs;
         next += 1;
-        hooks.setStatus(
-          `Chapter ${chapterIndex + 1}, segment ${segments.length + 1}: sentence ${next}/${sentences.length}. ` +
-          `Generated ${(totalGenMs / 1000).toFixed(1)} s for ${(totalAudioS + seconds).toFixed(1)} s of audio.`,
-        );
+        hooks.setStatus(describeProgress(next, sentences.length, loaded?.segments === segments));
         setGenerationMarker({ chapterIndex, done: next, total: sentences.length, at: Date.now() });
       }
       const chapter = joinClips(clips, gaps);
@@ -817,7 +830,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     const summary =
       `Chapter ${chapterIndex + 1} generation done. ${segments.length} segments, audio ${totalAudioS.toFixed(1)} s, ` +
       `generation ${(totalGenMs / 1000).toFixed(1)} s, RTF ${(totalGenMs / 1000 / Math.max(totalAudioS, 1)).toFixed(2)}.`;
-    hooks.setStatus(summary);
+    hooks.setStatus("Audio for this chapter is ready.");
     log(summary);
   }
 
@@ -830,6 +843,9 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     generatingChapterIndex = chapterIndex;
     awaitingFirstSegment = true;
     generationVoiceId = getVoiceId();
+    // A preview in flight must not draw over this generation.
+    previewToken += 1;
+    previewed = undefined;
     hooks.notifyChange();
     audio.pause();
     try {
@@ -950,6 +966,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         return;
       }
       hooks.showChapter(target.chapterIndex);
+      // Nothing is loaded yet, so show the text now. A loaded chapter keeps its text until the new first segment starts.
+      if (!loaded) hooks.renderChapter(target.sentences);
       void generateChapter(target.chapterIndex, 0, target.sentences);
     } catch (error) {
       hooks.setStatus(`Could not change the chapter: ${errorName(error)}`);
@@ -1019,6 +1037,55 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     });
   }
 
+  // Bumped by every preview request and every generation start. A preview that finds a newer value drops its result.
+  let previewToken = 0;
+  // The chapter whose text the preview drew. Cleared when a generation starts.
+  let previewed: { book: OpenBook; chapterIndex: number; sentences: Sentence[] } | undefined;
+
+  /** True when nothing generates and no chapter is loaded. Only then may a preview draw. */
+  function isIdle(): boolean {
+    return !generating && !loaded;
+  }
+
+  async function previewChapter(index?: number): Promise<void> {
+    const book = bookStore.opened;
+    const token = ++previewToken;
+    previewed = undefined;
+    if (!book || !isIdle()) return;
+    const stale = (): boolean => token !== previewToken || book !== bookStore.opened || !isIdle();
+    try {
+      let target: TextChapter | undefined;
+      if (index === undefined) {
+        target = await bookStore.findTextChapter(book, -1, 1);
+      } else {
+        target = { chapterIndex: index, sentences: await bookStore.chapterSentences(book, index) };
+      }
+      if (stale()) return;
+      if (!target || target.sentences.length === 0) {
+        hooks.clearText();
+        return;
+      }
+      if (index === undefined) {
+        hooks.showChapter(target.chapterIndex);
+        hooks.notifyChange();
+      }
+      hooks.renderChapter(target.sentences);
+      previewed = { book, chapterIndex: target.chapterIndex, sentences: target.sentences };
+      log(`preview: chapter ${target.chapterIndex + 1}, ${target.sentences.length} sentences`);
+    } catch (error) {
+      log(`preview failed: ${errorName(error)}`);
+    }
+  }
+
+  /** A tap on a sentence of the previewed chapter. Starts generation at that sentence. */
+  function startFromPreview(sentenceIndex: number): void {
+    const shown = previewed;
+    if (!shown || shown.book !== bookStore.opened || !isIdle() || navigating || isVoicesBusy()) return;
+    if (sentenceIndex < 0 || sentenceIndex >= shown.sentences.length) return;
+    log(`preview: starting at sentence ${sentenceIndex + 1}`);
+    void generateChapter(shown.chapterIndex, sentenceIndex, shown.sentences);
+  }
+
   /**
    * The chapter that is playing or starting. Before the first segment of a running generation loads,
    * that is the chapter being generated. Otherwise it is the loaded chapter. Undefined when neither exists.
@@ -1073,6 +1140,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     unloadChapter,
     navigateChapter,
     selectChapter,
+    previewChapter,
     clickSentence,
     hasLoaded: () => loaded !== undefined,
     persistPosition,
@@ -1086,6 +1154,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       return {
         generating,
         navigating,
+        wantPlaying,
         navigationBase: base,
         hasPrev: hasTextChapter(base, -1),
         hasNext: hasTextChapter(base, 1),

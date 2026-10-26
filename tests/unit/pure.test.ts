@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSpeed,
-  describePosition,
+  chapterTitle,
+  describeProgress,
   farSegments,
   hasTextChapter,
   playingChapterIndex,
@@ -11,6 +12,16 @@ import {
   sentenceIn,
   stepSpeed,
 } from "../../src/engine/pure";
+
+describe("describeProgress", () => {
+  it("says preparing while nothing plays", () => {
+    expect(describeProgress(52, 341, false)).toBe("Preparing audio, sentence 52 of 341");
+  });
+
+  it("is plain once a segment is loaded", () => {
+    expect(describeProgress(52, 341, true)).toBe("Sentence 52 of 341");
+  });
+});
 
 describe("sentenceIn", () => {
   const segment = {
@@ -248,31 +259,13 @@ describe("stepSpeed", () => {
   });
 });
 
-describe("describePosition", () => {
-  const position = {
-    bookTitle: "My Book",
-    chapterIndex: 2,
-    sentenceIndex: 9,
-    seconds: 125.9,
-    savedAt: 1_000_000,
-  };
-
-  it("formats minutes, padded seconds and the injected age", () => {
-    expect(describePosition(position, 1_042_000)).toBe(
-      'Saved: "My Book", chapter 3, sentence 10, 2:05 (42 s ago).',
-    );
+describe("chapterTitle", () => {
+  it("returns the title without a list number", () => {
+    expect(chapterTitle({ title: "CHAPTER ONE" })).toBe("CHAPTER ONE");
   });
 
-  it("pads single-digit seconds and handles zero", () => {
-    expect(describePosition({ ...position, seconds: 0 }, 1_000_000)).toBe(
-      'Saved: "My Book", chapter 3, sentence 10, 0:00 (0 s ago).',
-    );
-    expect(describePosition({ ...position, seconds: 59.99 }, 1_000_400)).toBe(
-      'Saved: "My Book", chapter 3, sentence 10, 0:59 (0 s ago).',
-    );
-  });
-
-  it("rounds the age to whole seconds", () => {
-    expect(describePosition(position, 1_001_600)).toContain("(2 s ago)");
+  it("falls back to (no title) for a missing chapter or a blank title", () => {
+    expect(chapterTitle(undefined)).toBe("(no title)");
+    expect(chapterTitle({ title: "  " })).toBe("(no title)");
   });
 });

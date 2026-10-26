@@ -21,6 +21,8 @@ export interface LibraryDeps {
   isNavigating(): boolean;
   isPaused(): boolean;
   voicesBusy(): boolean;
+  /** Show a chapter's text without audio. No index means the first chapter with text. Runs in the background. */
+  previewChapter(index?: number): Promise<void>;
 }
 
 export interface Library {
@@ -34,7 +36,7 @@ export interface Library {
 }
 
 export function createLibrary(deps: LibraryDeps): Library {
-  const { hooks, bookStore, isGenerating, cancelGeneration, activeGeneration, unloadChapter, isNavigating, isPaused, voicesBusy } =
+  const { hooks, bookStore, isGenerating, cancelGeneration, activeGeneration, unloadChapter, isNavigating, isPaused, voicesBusy, previewChapter } =
     deps;
   // Token of the newest book request (picked file, automatic restore or forget). A result with an older token is dropped.
   let bookToken = 0;
@@ -72,13 +74,17 @@ export function createLibrary(deps: LibraryDeps): Library {
     hooks.fillChapters(opened.chapters);
     log(`opened "${opened.title}" with ${opened.chapters.length} spine items`);
     // Preselect the saved chapter when this is the saved book. Nothing starts by itself.
+    // Either way the text of the chapter appears now, without audio.
     const savedPosition = loadPosition();
+    let previewIndex: number | undefined;
     if (savedPosition?.bookId === opened.id && opened.chapters[savedPosition.chapterIndex]) {
       hooks.showChapter(savedPosition.chapterIndex);
+      previewIndex = savedPosition.chapterIndex;
       log(`restored saved chapter ${savedPosition.chapterIndex + 1}`);
     }
     hooks.refreshSaved();
     void bookStore.scanChapters(opened);
+    void previewChapter(previewIndex);
     return true;
   }
 
