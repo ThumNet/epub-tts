@@ -88,6 +88,57 @@ test("open and remember: chapters, restore after reload, forget", async ({ page 
   await expect(page.locator("#chapter option")).toHaveCount(0);
 });
 
+test("preview: the chapter text shows before Listen, follows the select, and Listen keeps it", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  // The cover has no text, so the first chapter with text is shown and selected. No audio runs.
+  await expect(page.locator("#text")).toBeVisible();
+  await expect(page.locator("#text")).toContainText(sentenceText(1, 1));
+  await expect(page.locator("#chapter")).toHaveValue("1");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "listen");
+  await expect(page.locator("#text .current")).toHaveCount(0);
+  expect(await audioSource(page)).toBe("");
+
+  await openSheet(page, "book");
+  await page.locator("#chapter").selectOption("2");
+  await closeSheet(page, "book");
+  await expect(page.locator("#text")).toContainText(sentenceText(2, 1));
+  await expect(page.locator("#text")).not.toContainText(sentenceText(1, 1));
+  await expect(page.locator("#text .current")).toHaveCount(0);
+  expect(await audioSource(page)).toBe("");
+
+  await page.locator("#primary").click();
+  await expect(log(page)).toContainText("segment 1 play() resolved", { timeout: 30_000 });
+  await expect(page.locator("#text")).toContainText(sentenceText(2, 1));
+  await expect(page.locator("#text")).not.toContainText(sentenceText(1, 1));
+  await expect(page.locator("#text .current")).toBeVisible();
+});
+
+test("preview: a tap on a sentence before Listen starts generation at that sentence", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  await expect(page.locator("#text")).toContainText(sentenceText(1, 4));
+  await page.locator('#text span[data-index="3"]').click();
+  await expect(log(page)).toContainText("preview: starting at sentence 4");
+  await expect(log(page)).toContainText("starting at sentence 4", { timeout: 30_000 });
+  await expect(log(page)).toContainText("segment 1 play() resolved", { timeout: 30_000 });
+  await expect.poll(() => currentIndex(page), FAST_POLL).toBeGreaterThanOrEqual(3);
+});
+
+test("preview: after a reload the saved chapter text shows in the resume state", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  await generateChapter(page, 2);
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  await page.reload();
+  await expect(page.locator("#book")).toContainText("restored from this device");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "resume");
+  await expect(page.locator("#text")).toContainText(sentenceText(2, 1));
+  await expect(page.locator("#text .current")).toHaveCount(0);
+  expect(await audioSource(page)).toBe("");
+});
+
 test("generate and play: source, time, segment swap, highlight, speed", async ({ page }) => {
   await openApp(page);
   await pickBook(page);

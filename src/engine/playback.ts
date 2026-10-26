@@ -103,6 +103,11 @@ export interface Playback {
   unloadChapter(): void;
   navigateChapter(step: 1 | -1, source: string): Promise<void>;
   selectChapter(index: number): Promise<void>;
+  /**
+   * Show the text of a chapter without audio. `index` omitted means the first chapter with text, which is then
+   * selected. Does nothing while a generation runs or a chapter is loaded. A late result for an older call is dropped.
+   */
+  previewChapter(index?: number): Promise<void>;
   /** The click logic for a sentence index that the shell parsed from the DOM event. */
   clickSentence(index: number): void;
   /** Live: true while a chapter is loaded in the audio element. */
@@ -410,7 +415,10 @@ export function createPlayback(deps: PlaybackDeps): Playback {
 
   /** The body of the text click listener, after the shell parsed the sentence index from the event. */
   function clickSentence(index: number): void {
-    if (!loaded) return;
+    if (!loaded) {
+      startFromPreview(index);
+      return;
+    }
     const segmentIndex = segmentForSentence(loaded.segments, index);
     const segment = loaded.segments[segmentIndex];
     if (!segment) {
@@ -836,6 +844,9 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     generatingChapterIndex = chapterIndex;
     awaitingFirstSegment = true;
     generationVoiceId = getVoiceId();
+    // A preview in flight must not draw over this generation.
+    previewToken += 1;
+    previewed = undefined;
     hooks.notifyChange();
     audio.pause();
     try {
@@ -956,6 +967,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         return;
       }
       hooks.showChapter(target.chapterIndex);
+      // Nothing is loaded yet, so show the text now. A loaded chapter keeps its text until the new first segment starts.
+      if (!loaded) hooks.renderChapter(target.sentences);
       void generateChapter(target.chapterIndex, 0, target.sentences);
     } catch (error) {
       hooks.setStatus(`Could not change the chapter: ${errorName(error)}`);
@@ -1025,6 +1038,55 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     });
   }
 
+  // Bumped by every preview request and every generation start. A preview that finds a newer value drops its result.
+  let previewToken = 0;
+  // The chapter whose text the preview drew. Cleared when a generation starts.
+  let previewed: { book: OpenBook; chapterIndex: number; sentences: Sentence[] } | undefined;
+
+  /** True when nothing generates and no chapter is loaded. Only then may a preview draw. */
+  function isIdle(): boolean {
+    return !generating && !loaded;
+  }
+
+  async function previewChapter(index?: number): Promise<void> {
+    const book = bookStore.opened;
+    const token = ++previewToken;
+    previewed = undefined;
+    if (!book || !isIdle()) return;
+    const stale = (): boolean => token !== previewToken || book !== bookStore.opened || !isIdle();
+    try {
+      let target: TextChapter | undefined;
+      if (index === undefined) {
+        target = await bookStore.findTextChapter(book, -1, 1);
+      } else {
+        target = { chapterIndex: index, sentences: await bookStore.chapterSentences(book, index) };
+      }
+      if (stale()) return;
+      if (!target || target.sentences.length === 0) {
+        hooks.clearText();
+        return;
+      }
+      if (index === undefined) {
+        hooks.showChapter(target.chapterIndex);
+        hooks.notifyChange();
+      }
+      hooks.renderChapter(target.sentences);
+      previewed = { book, chapterIndex: target.chapterIndex, sentences: target.sentences };
+      log(`preview: chapter ${target.chapterIndex + 1}, ${target.sentences.length} sentences`);
+    } catch (error) {
+      log(`preview failed: ${errorName(error)}`);
+    }
+  }
+
+  /** A tap on a sentence of the previewed chapter. Starts generation at that sentence. */
+  function startFromPreview(sentenceIndex: number): void {
+    const shown = previewed;
+    if (!shown || shown.book !== bookStore.opened || !isIdle() || navigating || isVoicesBusy()) return;
+    if (sentenceIndex < 0 || sentenceIndex >= shown.sentences.length) return;
+    log(`preview: starting at sentence ${sentenceIndex + 1}`);
+    void generateChapter(shown.chapterIndex, sentenceIndex, shown.sentences);
+  }
+
   /**
    * The chapter that is playing or starting. Before the first segment of a running generation loads,
    * that is the chapter being generated. Otherwise it is the loaded chapter. Undefined when neither exists.
@@ -1079,6 +1141,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     unloadChapter,
     navigateChapter,
     selectChapter,
+    previewChapter,
     clickSentence,
     hasLoaded: () => loaded !== undefined,
     persistPosition,

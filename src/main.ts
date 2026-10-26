@@ -54,6 +54,7 @@ const library = createLibrary({
   isNavigating: () => playback.view().navigating,
   isPaused: () => audio.paused,
   voicesBusy: () => voices.busy,
+  previewChapter: (index) => playback.previewChapter(index),
 });
 const workerClient = createWorkerClient({
   setStatus: (text) => hooks.setStatus(text),

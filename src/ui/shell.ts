@@ -304,7 +304,7 @@ export function createShell(): Shell {
     const { playback } = engine();
     textElement.addEventListener("click", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement) || !playback.hasLoaded()) return;
+      if (!(target instanceof HTMLElement)) return;
       const index = Number(target.dataset["index"]);
       if (!Number.isInteger(index)) return;
       playback.clickSentence(index);
@@ -431,10 +431,13 @@ export function createShell(): Shell {
       ui.chapterValue = chapterSelect.value;
       ui.selectedChapter = Number(chapterSelect.value);
       drawChapters();
-      // While generating, a picked chapter behaves like Previous/Next. While idle it only updates the controls.
+      // While generating, a picked chapter behaves like Previous/Next. While idle it shows the chapter text without audio.
       const view = playback.view();
       if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());
-      else hooks.notifyChange();
+      else {
+        hooks.notifyChange();
+        void playback.previewChapter(hooks.getSelectedChapter());
+      }
     });
     prevChapterButton.addEventListener("click", () => void playback.navigateChapter(-1, "button"));
     nextChapterButton.addEventListener("click", () => void playback.navigateChapter(1, "button"));

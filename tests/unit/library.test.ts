@@ -90,6 +90,7 @@ function setup(overrides: { generating?: boolean; navigating?: boolean; paused?:
   } satisfies BookStore;
   const cancelGeneration = vi.fn(() => events.push("cancelGeneration"));
   const unloadChapter = vi.fn(() => events.push("unloadChapter"));
+  const previewChapter = vi.fn((_index?: number) => Promise.resolve());
   const library = createLibrary({
     hooks,
     bookStore,
@@ -100,8 +101,9 @@ function setup(overrides: { generating?: boolean; navigating?: boolean; paused?:
     isNavigating: () => state.navigating,
     isPaused: () => state.paused,
     voicesBusy: () => state.voicesBusy,
+    previewChapter,
   });
-  return { events, state, hooks, bookStore, cancelGeneration, unloadChapter, library };
+  return { events, state, hooks, bookStore, cancelGeneration, unloadChapter, previewChapter, library };
 }
 
 function file(): File {
@@ -184,6 +186,22 @@ describe("pick", () => {
     t.library.pick(file());
     await flush();
     expect(t.hooks.showChapter).not.toHaveBeenCalled();
+  });
+
+  it("previews the saved chapter, or the first text chapter when no chapter is saved", async () => {
+    const saved = setup();
+    mocks.loadPosition.mockReturnValue({ bookId: "b1", chapterIndex: 2, sentenceIndex: 0 });
+    mocks.openBook.mockResolvedValue(fakeBook("b1"));
+    mocks.saveBook.mockResolvedValue({ ok: true, size: 1 });
+    saved.library.pick(file());
+    await flush();
+    expect(saved.previewChapter).toHaveBeenCalledWith(2);
+
+    const fresh = setup();
+    mocks.loadPosition.mockReturnValue(undefined);
+    fresh.library.pick(file());
+    await flush();
+    expect(fresh.previewChapter).toHaveBeenCalledWith(undefined);
   });
 
   it("cancels a running generation, awaits it, then continues", async () => {

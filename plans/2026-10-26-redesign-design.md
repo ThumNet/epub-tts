@@ -541,3 +541,30 @@ Changes:
 Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 233 passed. `npm run build:e2e` OK. `npm run test:e2e` 34 passed (Chromium and Firefox), one run.
 
 Not checked: how the fade, the two-line status and the bar height look in a real browser or on a phone. I made no screenshots. A real Safari and the standalone PWA are not checked either.
+
+## Step 7b result
+
+User feedback: the reading text appeared only after Listen. After a chapter pick or a restore the text area was empty.
+
+Engine change (`src/engine/playback.ts`): new `previewChapter(index?)`.
+- It reads the sentences with `bookStore.chapterSentences` (same splitting as generation) and calls `hooks.renderChapter`. No new hook. No highlight. No audio.
+- With no index it uses `findTextChapter(book, -1, 1)`, then selects that chapter with `hooks.showChapter`. This skips the empty cover.
+- It does nothing when a generation runs or a chapter is loaded. The shown text then stays that of the playing chapter.
+- Stale guard: each call and each generation start bumps `previewToken`. A late result also checks that the book and the idle state are unchanged. Otherwise it drops the result.
+- A chapter with no sentences clears the text.
+- `src/engine/library.ts` gets one dependency, `previewChapter`. `main.ts` wires it. The engine stays DOM-free, 0 cycles, no `any`, no new unsafe `as` in `src`.
+
+Cases covered:
+- (a) Select change while idle: `shell.ts` calls `previewChapter(selected)`. While generating or navigating, the handler still calls `selectChapter` as before.
+- (b) Previous and Next while idle: they still start generation, as before. I did not change this, because the rule says not to change audio behaviour. `runNavigation` now draws the target text at once when no chapter is loaded, so the text shows while the first segment generates. With a chapter loaded, the old text stays until the new first segment starts.
+- (c) Open a book: `showBook` previews the saved chapter (Resume state, also after reload) or else the first chapter with text.
+
+Jump in preview: a tap on a sentence of a previewed chapter starts generation at that sentence (`startFromPreview`, same path as Resume). It needs an idle engine, no navigation, no busy voices and an unchanged book. The shell click guard `hasLoaded()` is removed. `clickSentence` still handles the loaded case as before.
+
+Edits to existing tests: none changed in meaning. `tests/unit/library.test.ts`: `setup` passes the new `previewChapter` dependency (required by the type). `tests/unit/playback.test.ts`: `setup` also returns `bookStore`. No existing e2e test changed.
+
+New tests: unit 9 (7 `previewChapter` and tap in `playback.test.ts`, 1 in `library.test.ts`; the count 233 to 242 includes them). e2e 3: text before Listen with select change and Listen keeps text and highlight; tap before Listen; text after reload in Resume state.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 242 passed. `npm run build:e2e` OK. `npm run test:e2e` 40 passed (Chromium and Firefox), one run.
+
+Not checked: the look on a real phone or Safari, a very long chapter (text is drawn at once, as in generation), and the "loaded but not generating" case in a unit test (it needs a built wav, so only the generating case is unit tested). Next or Previous while idle still plays audio. I did not change that.
