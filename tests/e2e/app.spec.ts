@@ -1,5 +1,6 @@
 import { BOOK_TITLE, sentenceText } from "./epub-fixture";
 import {
+  audioPaused,
   audioRate,
   audioSource,
   audioTime,
@@ -30,6 +31,7 @@ test("startup: quiet page, version footer, five voices, Kristin by default", asy
   await expect(page.locator("#voice")).toHaveValue("en_US-kristin-medium");
   await expect(page.locator("#welcome")).toBeVisible();
   await expect(page.locator("#welcome label[for=file]")).toHaveText("Open an EPUB");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "open");
   await expect(page.locator("#text")).toBeHidden();
 });
 
@@ -49,24 +51,27 @@ test("open and remember: chapters, restore after reload, forget", async ({ page 
   await expect(page.locator("#chapter")).toContainText("Chapter Three");
   await expect(page.locator("#book")).toContainText("remembered");
 
-  // The saved position is written when a chapter starts. Generate once so a chapter is saved, then stop.
+  // The saved position is written when a chapter starts. Generate once so a chapter is saved, then pause.
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "listen");
   await generateChapter(page, 2);
-  await page.locator("#cancel").click();
-  await expect(page.locator("#cancel")).toBeDisabled();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  expect(await audioPaused(page)).toBe(true);
 
   await page.reload();
   await expect(page.locator("#book")).toContainText("restored from this device");
   await expect(page.locator("#book")).toContainText(BOOK_TITLE);
   await expect(page.locator("#chapter")).toHaveValue("2");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "resume");
+  await expect(page.locator("#listen-start")).toBeVisible();
   await expect(page.locator("#forget-book")).toBeVisible();
 
-  await page.locator("#audio").evaluate((element) => {
-    if (element instanceof HTMLMediaElement) element.pause();
-  });
   await expect(page.locator("#forget-book")).toBeEnabled();
   await page.locator("#forget-book").click();
   await expect(page.locator("#forget-book")).toBeHidden();
   await expect(page.locator("#chapter option")).toHaveCount(0);
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "open");
 
   await page.reload();
   await expect(page.locator("#app-version")).toContainText("epub-tts v");
@@ -78,10 +83,18 @@ test("generate and play: source, time, segment swap, highlight, speed", async ({
   await openApp(page);
   await pickBook(page);
   await generateChapter(page, 1);
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
   expect(await audioSource(page)).not.toBe("");
   // Speed 1x: a segment lasts at least 4 s, so the time is seen above 0.3 s while polling every 100 ms.
   await expect.poll(() => audioTime(page), FAST_POLL).toBeGreaterThan(0.3);
   await expect(page.locator("#text .current")).toBeVisible();
+
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  expect(await audioPaused(page)).toBe(true);
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
+  await expect.poll(() => audioPaused(page)).toBe(false);
 
   await page.locator("#speed-up").click();
   await page.locator("#speed-up").click();
@@ -92,6 +105,33 @@ test("generate and play: source, time, segment swap, highlight, speed", async ({
   await expect(log(page)).toContainText("swap to segment 3", { timeout: 45_000 });
   expect(await audioRate(page)).toBe(1.5);
   await expect.poll(() => currentIndex(page), FAST_POLL).toBeGreaterThan(1);
+});
+
+test("stop: the primary button cancels generation before the first audio and returns to listen", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  await page.locator("#chapter").selectOption("1");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "listen");
+  // The mock worker is fast, so "stop" lasts well under a second. Click it from the attribute observer, not from the test.
+  const stoppedAt = await page.locator("#primary").evaluate(
+    (element) =>
+      new Promise<string>((resolve) => {
+        if (!(element instanceof HTMLElement)) throw new Error("#primary is not an HTML element");
+        const button = element;
+        const observer = new MutationObserver(() => {
+          if (button.getAttribute("data-state") !== "stop") return;
+          observer.disconnect();
+          button.click();
+          resolve("stop");
+        });
+        observer.observe(button, { attributes: true, attributeFilter: ["data-state"] });
+        button.click();
+      }),
+  );
+  expect(stoppedAt).toBe("stop");
+  await expect(log(page)).toContainText("cancel requested");
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", /^(listen|resume)$/, { timeout: 30_000 });
+  await expect(page.locator("#primary")).toBeEnabled();
 });
 
 test("chapter navigation: next, previous, previous disabled on the first text chapter", async ({ page }) => {

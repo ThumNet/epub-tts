@@ -70,11 +70,45 @@ describe("createPlayback on an idle engine", () => {
     expect(playback.view()).toEqual({
       generating: false,
       navigating: false,
+      wantPlaying: false,
       navigationBase: 4,
       hasPrev: false,
       hasNext: false,
     });
     expect(playback.hasLoaded()).toBe(false);
+  });
+
+  it("view.wantPlaying follows the play event and pauseFromMediaSession", () => {
+    const { playback, audio } = setup();
+    playback.registerPlayPauseListeners();
+    const play = audio.addEventListener.mock.calls.find(([name]) => name === "play")?.[1] as () => void;
+    expect(playback.view().wantPlaying).toBe(false);
+    play();
+    expect(playback.view().wantPlaying).toBe(true);
+    playback.pauseFromMediaSession();
+    expect(audio.pause).toHaveBeenCalledTimes(1);
+    expect(playback.view().wantPlaying).toBe(false);
+  });
+
+  it("pauseFromMediaSession notifies, because pausing already-paused audio fires no pause event", () => {
+    const { playback, hooks, audio } = setup();
+    playback.pauseFromMediaSession();
+    expect(audio.pause).toHaveBeenCalledTimes(1);
+    expect(hooks.notifyChange).toHaveBeenCalledTimes(1);
+    expect(playback.view().wantPlaying).toBe(false);
+  });
+
+  it("playFromMediaSession sets wantPlaying and notifies", () => {
+    vi.useFakeTimers();
+    try {
+      const { playback, hooks, audio } = setup();
+      Object.assign(audio, { play: vi.fn(() => Promise.resolve()), currentTime: 0 });
+      playback.playFromMediaSession();
+      expect(hooks.notifyChange).toHaveBeenCalledTimes(1);
+      expect(playback.view().wantPlaying).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("unloadChapter with nothing loaded does nothing", () => {

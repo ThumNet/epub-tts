@@ -67,9 +67,9 @@ export function createShell(): Shell {
   const speedUpButton = byId("speed-up", HTMLButtonElement);
   const speedLabel = byId("speed-label", HTMLSpanElement);
   const speedResetButton = byId("speed-reset", HTMLButtonElement);
-  const generateButton = byId("generate", HTMLButtonElement);
-  const cancelButton = byId("cancel", HTMLButtonElement);
-  const resumeButton = byId("resume", HTMLButtonElement);
+  const primaryButton = byId("primary", HTMLButtonElement);
+  const primaryLabel = byId("primary-label", HTMLSpanElement);
+  const listenStartButton = byId("listen-start", HTMLButtonElement);
   const copyLogButton = byId("copy-log", HTMLButtonElement);
   const copyStatus = byId("copy-status", HTMLSpanElement);
   const versionElement = byId("app-version", HTMLElement);
@@ -124,9 +124,12 @@ export function createShell(): Shell {
   }
 
   function drawControls(view: ControlsView): void {
-    generateButton.disabled = view.generateDisabled;
-    cancelButton.disabled = view.cancelDisabled;
-    resumeButton.disabled = view.resumeDisabled;
+    primaryButton.dataset["state"] = view.primary.state;
+    primaryButton.disabled = view.primary.disabled;
+    primaryLabel.textContent = view.primary.label;
+    listenStartButton.hidden = view.secondaryHidden;
+    listenStartButton.disabled = view.secondaryDisabled;
+    savedElement.hidden = view.savedHidden;
     voiceSelect.disabled = view.voiceSelectDisabled;
     forgetButton.hidden = view.forgetHidden;
     forgetButton.disabled = view.forgetDisabled;
@@ -235,6 +238,7 @@ export function createShell(): Shell {
       book: opened ? { id: opened.id, title: opened.title } : undefined,
       settings: { voiceId: settings.voiceId, speed: settings.speed },
       saved: loadPosition(),
+      loaded: playback.hasLoaded(),
       paused: audio.paused,
       now: Date.now(),
     };
@@ -427,20 +431,43 @@ export function createShell(): Shell {
     prevChapterButton.addEventListener("click", () => void playback.navigateChapter(-1, "button"));
     nextChapterButton.addEventListener("click", () => void playback.navigateChapter(1, "button"));
 
-    generateButton.addEventListener("click", () => {
+    function generateFromStart(): void {
       if (voices.busy) return;
       void playback.generateChapter(hooks.getSelectedChapter());
-    });
+    }
 
-    cancelButton.addEventListener("click", () => playback.cancelGeneration());
-
-    resumeButton.addEventListener("click", () => {
+    function resumeSaved(): void {
       const saved = loadPosition();
       if (!saved || bookStore.opened?.id !== saved.bookId || voices.busy) return;
       hooks.showChapter(saved.chapterIndex);
       log(`resuming at sentence ${saved.sentenceIndex + 1} with voice ${selectedVoiceId()}: generating from that sentence`);
       void playback.generateChapter(saved.chapterIndex, saved.sentenceIndex);
+    }
+
+    primaryButton.addEventListener("click", () => {
+      switch (deriveView(snapshot()).primary.state) {
+        case "stop":
+          playback.cancelGeneration();
+          break;
+        case "pause":
+          playback.pauseFromMediaSession();
+          break;
+        case "play":
+          playback.playFromMediaSession();
+          break;
+        case "resume":
+          resumeSaved();
+          break;
+        case "listen":
+          generateFromStart();
+          break;
+        case "open":
+          fileInput.click();
+          break;
+      }
     });
+
+    listenStartButton.addEventListener("click", generateFromStart);
 
     copyLogButton.addEventListener("click", () => {
       const text = diagnosticsText();

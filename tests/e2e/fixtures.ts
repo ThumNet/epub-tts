@@ -34,14 +34,15 @@ export function chapterValue(chapter: 1 | 2 | 3): string {
 }
 
 /**
- * Pick a chapter, press Generate and wait until the first segment started to play. The wait uses the log line
- * "segment 1 play() resolved", which stays in the log. It does not depend on how fast the audio plays.
+ * Pick a chapter, press the primary button (Listen) and wait until the first segment started to play. The wait uses the
+ * log line "segment 1 play() resolved", which stays in the log. It does not depend on how fast the audio plays.
  * Call it once per page, because the log line is the same for every generation.
  */
 export async function generateChapter(page: Page, chapter: 1 | 2 | 3): Promise<void> {
   await page.locator("#chapter").selectOption(chapterValue(chapter));
-  await expect(page.locator("#generate")).toBeEnabled();
-  await page.locator("#generate").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "listen");
+  await expect(page.locator("#primary")).toBeEnabled();
+  await page.locator("#primary").click();
   await expect(log(page)).toContainText("segment 1 play() resolved", { timeout: 30_000 });
 }
 
@@ -61,6 +62,10 @@ export function currentIndex(page: Page): Promise<number> {
 
 export function audioTime(page: Page): Promise<number> {
   return page.locator("#audio").evaluate((element) => (element instanceof HTMLMediaElement ? element.currentTime : -1));
+}
+
+export function audioPaused(page: Page): Promise<boolean> {
+  return page.locator("#audio").evaluate((element) => (element instanceof HTMLMediaElement ? element.paused : false));
 }
 
 export function audioSource(page: Page): Promise<string> {

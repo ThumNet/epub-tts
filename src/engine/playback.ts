@@ -88,6 +88,8 @@ export interface PlaybackDeps {
 export interface PlaybackView {
   generating: boolean;
   navigating: boolean;
+  /** The user's intent to hear audio. It stays true across the pause between two segments. */
+  wantPlaying: boolean;
   navigationBase: number;
   hasPrev: boolean;
   hasNext: boolean;
@@ -309,6 +311,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
 
   function playFromMediaSession(): void {
     wantPlaying = true;
+    // While buffering, audio is already paused, so no `play` event follows. Redraw for the new intent.
+    hooks.notifyChange();
     if (buffering) {
       // The segment ended and the next one is not ready. play() would replay the ended segment.
       log("play pressed while buffering: playback starts when the next segment is ready");
@@ -380,6 +384,8 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     wantPlaying = false;
     watchToken += 1;
     audio.pause();
+    // Pausing audio that is already paused (buffering between segments) fires no `pause` event.
+    hooks.notifyChange();
   }
 
   // ---------------------------------------------------------------- highlight
@@ -1086,6 +1092,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       return {
         generating,
         navigating,
+        wantPlaying,
         navigationBase: base,
         hasPrev: hasTextChapter(base, -1),
         hasNext: hasTextChapter(base, 1),

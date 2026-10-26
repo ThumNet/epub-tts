@@ -377,3 +377,46 @@ Not checked visually: no screenshot was taken. The phone layout, the dark scheme
 ### Attempt 2
 
 Fix: the chapter `change` handler in `src/ui/shell.ts` now calls `drawChapters()` after it updates `ui.selectedChapter`. The idle branch only called `notifyChange()`, and `render()` does not draw `#chapter-name`. The draw sections are unchanged. Added an e2e assertion in the open-and-remember test: after opening a book, selecting chapter 2 while idle changes `#chapter-name` (it ends with "Chapter Two"). Labels carry a number prefix, for example "3. Chapter Two". typecheck (0 cycles), build, `npm test` (219), build:e2e and `npm run test:e2e` (14 passed, run twice after the fix) are green.
+
+## Step 3 result
+
+Files: `src/engine/playback.ts` (one read-only field), `src/ui/view.ts`, `src/ui/shell.ts`, `index.html`, `src/styles.css`, `tests/unit/playback.test.ts`, `tests/unit/view.test.ts`, `tests/e2e/fixtures.ts`, `tests/e2e/app.spec.ts`, this plan.
+
+Engine: `PlaybackView` and `view()` gain `wantPlaying` (the existing internal flag). No behaviour change. The unit test checks the idle value, the `play` event and `pauseFromMediaSession`.
+
+State table as implemented (`primaryState` in `view.ts`, first match wins):
+
+| # | State | Condition | Label | Disabled |
+|---|---|---|---|---|
+| 1 | `open` | `!book` | Open an EPUB | `library.busy` |
+| 2 | `stop` | `generating && !loaded` | Stop | never |
+| 3 | `pause` | `loaded && wantPlaying` | Pause | never |
+| 4 | `play` | `loaded && !wantPlaying` | Play | never |
+| 5 | `resume` | `saved.bookId === book.id` | Resume | `locked` |
+| 6 | `listen` | otherwise | Listen | `locked` |
+
+`deriveView` also returns `secondaryHidden` (false only in `resume`), `secondaryDisabled` (`locked || !book`, today's `generateDisabled`) and `savedHidden` (true except in `resume`). `generateDisabled`, `cancelDisabled` and `resumeDisabled` are removed. `Snapshot` gains `loaded` (`playback.hasLoaded()`).
+
+Sub-line: `savedText` keeps today's wording (`describePosition`). The wording change to "Chapter N, 12 min ago" is not done. It needs a change to the engine helper `describePosition`, which is outside this step's scope. `#saved` is hidden outside the resume state, so the "Pick the same EPUB file" hint for another book is not shown any more.
+
+Markup: `#primary` (`data-state`, four inline SVG icons with `aria-hidden`, `focusable="false"`, CSS shows one per state, `#primary-label` span is the accessible name) and `#listen-start` (hidden outside resume). `#generate`, `#cancel`, `#resume` are removed. The click handler switches on the derived state. `open` calls `fileInput.click()`, but the button is not visible then because the welcome shows. Native `#audio controls` stay.
+
+e2e edits:
+- `fixtures.ts` `generateChapter`: asserts `#primary` is `listen` and enabled, clicks `#primary` (was `#generate`). Added `audioPaused`.
+- startup test: asserts `#primary` has `data-state=open`.
+- open-and-remember: Cancel is no longer reachable after the first audio plays. The test now pauses through `#primary` (`pause` then `play`, `audioPaused` true). After reload it asserts `resume` and a visible `#listen-start`. It drops the direct `element.pause()`. After Forget it asserts `open`.
+- generate-and-play: asserts `pause` after the first audio, then one Pause click (`play`, audio paused) and one Play click (`pause`, audio playing).
+- new test "stop": a MutationObserver clicks `#primary` the moment `data-state` becomes `stop` (the mock worker is too fast for a Playwright click). It expects "cancel requested" in the log, then `listen` or `resume`. This replaces the old cancel coverage.
+- Other tests are unchanged.
+
+Edge case (chapter loaded while a new generation starts): by the rule order the button shows Pause or Play, so Stop is unreachable. The unit test "a loaded chapter with generation running shows pause or play" covers the derivation. I did not observe it in a browser. The mock worker generates a whole chapter in under a second, so the `generating && loaded` window is too short to test reliably. Also, the cancel observed in the stop test returned to `listen` or `resume` (assertion passes in Chromium and Firefox), so cancel before the first audio leaves nothing loaded.
+
+G2 (end of book, state `play`) was not observed.
+
+Results: `npm run typecheck` OK (boundaries 0 cycles). `npm run build` OK, no mock strings in `dist` (CSS 5.50 kB). `npm test` 231 passed. `npm run build:e2e` OK. `npm run test:e2e` 16 passed, run twice.
+
+Not checked visually: no screenshot. The amber and outlined button styles, the icon size and alignment, the 56 px height, the full width, the layout with the hidden `#saved`, and the secondary button look are unverified. The native `<audio controls>` still shows below the button until step 5.
+
+### Attempt 2
+
+Fix: pause during buffering left the button on "Pause". At a segment end the audio is already paused, so `audio.pause()` fires no `pause` event and nothing redrew. `pauseFromMediaSession` and `playFromMediaSession` in `src/engine/playback.ts` now call `hooks.notifyChange()` after they set `wantPlaying`. I chose the engine fix over a redraw in the click handler. The lock screen and headphone controls call the same functions, so they had the same bug. The change is two calls to the existing hook, no new API. Unit tests in `tests/unit/playback.test.ts`: pause notifies once and clears `wantPlaying`, play sets `wantPlaying` and notifies once. No e2e test: the mock worker has no delay setting, so buffering cannot be reproduced there. typecheck (0 cycles), build (no mock strings in `dist`), `npm test` (233), build:e2e and `npm run test:e2e` (16 passed, run twice) are green.
