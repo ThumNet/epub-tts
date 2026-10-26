@@ -1,6 +1,5 @@
 // Pure view derivation. No DOM access here, so the unit tests run in Node.
 import { SPEED_MAX, SPEED_MIN } from "../engine/config";
-import { describePosition } from "../engine/pure";
 import type { ChapterInfo } from "../epub";
 import type { PlaybackView } from "../engine/playback";
 import type { SavedPosition } from "../store";
@@ -64,9 +63,10 @@ export interface ControlsView {
   welcomeVisible: boolean;
 }
 
-/** The label of the chapter with this index, or an empty string when there is none. */
+/** The title of the chapter with this index, without the "N. " prefix of the picker label. Empty when there is none. */
 export function chapterNameText(chapters: ReadonlyArray<ChapterInfo>, index: number): string {
-  return chapters.find((c) => c.index === index)?.label ?? "";
+  const label = chapters.find((c) => c.index === index)?.label ?? "";
+  return label.replace(/^\d+\. /, "");
 }
 
 function voiceStatusText(voices: Snapshot["voices"], voiceId: string): string {
@@ -78,10 +78,26 @@ function voiceStatusText(voices: Snapshot["voices"], voiceId: string): string {
   return `Not downloaded (about ${Math.round(size)} MB)`;
 }
 
-function savedText(saved: SavedPosition | undefined, book: Snapshot["book"], now: number): string {
-  if (!saved) return "No saved position.";
-  const matches = book?.id === saved.bookId;
-  return `${describePosition(saved, now)} ${matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."}`;
+/** "just now" under one minute, then "N min ago", "N h ago" and "N day(s) ago". Whole units, rounded down. */
+export function relativeTimeText(savedAt: number, now: number): string {
+  const minutes = Math.floor((now - savedAt) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
+/** The header already names the chapter, so the sub-line gives only the age. Empty when there is no save. */
+function savedText(saved: SavedPosition | undefined, now: number): string {
+  if (!saved) return "";
+  return `Saved ${relativeTimeText(saved.savedAt, now)}`;
+}
+
+/** The engine starts with "Idle." as its status. The UI shows nothing for it. */
+export function statusText(status: string): string {
+  return status === "Idle." ? "" : status;
 }
 
 /** First match wins: open, stop, pause, play, resume, listen. `wantPlaying` (not `paused`) avoids a flicker between segments. */
@@ -114,7 +130,7 @@ export function deriveView(snapshot: Snapshot): ControlsView {
     voiceDownloadDisabled: locked || voices.stored !== false,
     voiceRemoveDisabled: locked || voices.stored !== true,
     voiceStatusText: voiceStatusText(voices, settings.voiceId),
-    savedText: savedText(saved, book, now),
+    savedText: savedText(saved, now),
     voiceValue: settings.voiceId,
     speedLabel: `${settings.speed.toFixed(2)}x`,
     speedDownDisabled: settings.speed <= SPEED_MIN,

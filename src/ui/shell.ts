@@ -5,7 +5,7 @@ import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
-import { chapterNameText, deriveView, type ControlsView, type Snapshot } from "./view";
+import { chapterNameText, deriveView, statusText, type ControlsView, type Snapshot } from "./view";
 import { initSheets, type Sheets } from "./sheets";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
@@ -96,7 +96,7 @@ export function createShell(): Shell {
   // because a wider draw would show engine state at moments when the old code left the element alone.
 
   function drawTexts(): void {
-    statsElement.textContent = ui.status;
+    statsElement.textContent = statusText(ui.status);
     bookInfo.textContent = ui.bookInfo;
     copyStatus.textContent = ui.copyStatus;
   }
@@ -112,7 +112,7 @@ export function createShell(): Shell {
     chapterNameElement.textContent = chapterNameText(ui.chapters, ui.selectedChapter);
   }
 
-  /** The saved text includes the age of the save, so only `refreshSavedUi` draws it. */
+  /** The saved text includes the age of the save, so only `refreshSavedUi` and a 30 s timer draw it. */
   function renderSaved(): void {
     savedElement.textContent = deriveView(snapshot()).savedText;
   }
@@ -259,6 +259,9 @@ export function createShell(): Shell {
     setInterval(() => {
       if (!audio.paused) playback.persistPosition("interval");
     }, SAVE_INTERVAL_MS);
+    setInterval(() => {
+      if (!savedElement.hidden) renderSaved();
+    }, 30_000);
   }
 
   // ---------------------------------------------------------------- page lifecycle logging

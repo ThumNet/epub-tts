@@ -568,3 +568,33 @@ New tests: unit 9 (7 `previewChapter` and tap in `playback.test.ts`, 1 in `libra
 Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 242 passed. `npm run build:e2e` OK. `npm run test:e2e` 40 passed (Chromium and Firefox), one run.
 
 Not checked: the look on a real phone or Safari, a very long chapter (text is drawn at once, as in generation), and the "loaded but not generating" case in a unit test (it needs a built wav, so only the generating case is unit tested). Next or Previous while idle still plays audio. I did not change that.
+
+## Step 8 result
+
+User feedback: (1) the status line showed "Idle." with nothing happening. (2) The long saved text sat above the Resume button.
+
+Changes (UI layer only, `src/engine` untouched, all ids kept):
+- `#saved` moved in `index.html` to sit directly after `#primary` and before `#listen-start`. It starts `hidden` and empty. It shows only in the resume state (`savedHidden`, unchanged).
+- Its text is now `Chapter N, <age>`. `N` is `chapterIndex + 1`, the same number as the chapter list label (`epub.ts` builds `${index + 1}. label`). No Snapshot change was needed: `saved.chapterIndex` and `saved.savedAt` were already there.
+- New pure helper `relativeTimeText(savedAt, now)` in `src/ui/view.ts`: under 1 min "just now" (also for a save in the future), then "N min ago", "N h ago", "1 day ago" or "N days ago". Whole units, rounded down.
+- `savedText` returns "" when nothing is saved. The old long text and the "Pick the same EPUB file" hint are gone from the main screen. `describePosition` stays in the engine, now unused by the UI.
+- Style: `#saved` is centred, 0.8rem, `--muted` (same as `#stats`, same AA ratio), with `margin-top` under the button.
+- Refresh: `renderSaved` still runs on `refreshSavedUi` (the old trigger). I added one 30 s interval in `startPersistTimer` that redraws `#saved` while it is visible, so the age does not stay at "just now".
+- Idle: the string "Idle." comes from `createUiState` in `src/ui/state.ts` (UI side, not the engine). `statusText()` in `view.ts` maps "Idle." to "". `drawTexts` uses it. `#stats` starts empty in `index.html`. `#stats` keeps `min-height: 2.6em`, so the bar does not jump. Other status messages are unchanged.
+
+Tests:
+- Unit (`tests/unit/view.test.ts`): replaced the 4 old saved-text tests. New: `relativeTimeText` boundaries (0, 59.999 s, future, 1 min, 59 min, 1 h, 23 h, 1 day, 47 h, 48 h, 400 days), `statusText`, saved text with chapter number and age.
+- e2e: no old assertion read the old text or "Idle.". Added to the reload test: `#saved` visible with `Chapter 3, (just now|N min ago)`, `#saved` is the next sibling of `#primary` (DOM order), `#stats` is empty. The reload test generates select value 2, which the list labels "3.".
+
+Results: `npm run typecheck` OK. `npm run build` OK, no mock strings in `dist`. `npm test` 245 passed. `npm run build:e2e` OK. `npm run test:e2e`: first run 38 passed, 2 failed (my new assertion expected "Chapter 2", the right value is "Chapter 3"). After the fix, second run 40 passed.
+
+Not checked visually: the spacing and centring of `#saved` under the button, and the bar height without the Idle text. No screenshot taken.
+
+### Attempt 2
+
+User feedback: "Chapter 10, 3 min ago" next to a header "10. CHAPTER ONE" confused. The number is the position in the book list, and front matter counts.
+- `#saved` text is now `Saved <age>` ("Saved just now", "Saved 3 min ago"). No chapter number.
+- `chapterNameText` (`view.ts`) now removes the leading `N. ` from the label, so `#chapter-name` shows "CHAPTER ONE". Only the first prefix goes ("5. 1. Intro" gives "1. Intro"). A chapter with no title keeps "(no title)", because `epub.ts` builds the label as `N. (no title)`. Without a title, that text is the only name available, and a bare number would repeat the confusion. The `#chapter` picker options keep the number prefix (`epub.ts` untouched).
+- Unit: `chapterNameText` tests use numbered labels and cover the no-title fallback and the single-prefix strip. Saved-text test uses the new strings.
+- e2e: `#saved` matches `^Saved (just now|N min ago)$`. In the open test, `#chapter-name` must equal `Chapter Two` exactly and the checked `#chapter` option must match `N. Chapter Two`. The existing "name changes after a chapter pick" check stays.
+- `plans/step8.tmp` is a stray empty-ish file from attempt 1. Please delete it.

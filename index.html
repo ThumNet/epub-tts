@@ -41,7 +41,6 @@
       <div class="reader">
         <div id="text"></div>
         <div class="controls">
-          <div id="saved">No saved position.</div>
           <button id="primary" type="button" data-state="open" disabled>
             <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.5v15l13-7.5z" /></svg>
             <svg class="icon icon-pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z" /></svg>
@@ -49,8 +48,9 @@
             <svg class="icon icon-resume" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.5 4v4.5H9" /></svg>
             <span id="primary-label">Open an EPUB</span>
           </button>
+          <div id="saved" hidden></div>
           <button id="listen-start" type="button" class="secondary" hidden>Listen from chapter start</button>
-          <div id="stats">Idle.</div>
+          <div id="stats"></div>
           <audio id="audio" preload="auto" hidden></audio>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chapterNameText, deriveView, type Snapshot } from "../../src/ui/view";
+import { chapterNameText, deriveView, relativeTimeText, statusText, type Snapshot } from "../../src/ui/view";
 
 const NOW = 100_000;
 
@@ -232,23 +232,49 @@ describe("deriveView: voice buttons and status", () => {
   });
 });
 
+describe("relativeTimeText", () => {
+  const at = (ms: number): string => relativeTimeText(NOW - ms, NOW);
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  it("says just now under one minute, including a save from the future", () => {
+    expect(at(0)).toBe("just now");
+    expect(at(59_999)).toBe("just now");
+    expect(at(-5000)).toBe("just now");
+  });
+  it("counts whole minutes from one to 59", () => {
+    expect(at(MIN)).toBe("1 min ago");
+    expect(at(2 * MIN + 59_000)).toBe("2 min ago");
+    expect(at(HOUR - 1)).toBe("59 min ago");
+  });
+  it("counts whole hours from one to 23", () => {
+    expect(at(HOUR)).toBe("1 h ago");
+    expect(at(5 * HOUR + 30 * MIN)).toBe("5 h ago");
+    expect(at(24 * HOUR - 1)).toBe("23 h ago");
+  });
+  it("counts days with singular and plural", () => {
+    expect(at(24 * HOUR)).toBe("1 day ago");
+    expect(at(47 * HOUR)).toBe("1 day ago");
+    expect(at(48 * HOUR)).toBe("2 days ago");
+    expect(at(400 * 24 * HOUR)).toBe("400 days ago");
+  });
+});
+
+describe("statusText", () => {
+  it("hides the idle status and keeps every other message", () => {
+    expect(statusText("Idle.")).toBe("");
+    expect(statusText("Generating...")).toBe("Generating...");
+    expect(statusText("")).toBe("");
+  });
+});
+
 describe("deriveView: saved text", () => {
-  it("says so when nothing is saved", () => {
-    expect(deriveView(snap()).savedText).toBe("No saved position.");
+  it("is empty when nothing is saved", () => {
+    expect(deriveView(snap()).savedText).toBe("");
   });
-  it("prompts Resume when the saved book is open", () => {
-    expect(deriveView(snap({ saved: savedFor("a.epub:10") })).savedText).toBe(
-      'Saved: "Book A", chapter 2, sentence 5, 1:15 (3 s ago). Press Resume saved position.',
-    );
-  });
-  it("asks for the same file when another book is open", () => {
-    expect(deriveView(snap({ saved: savedFor("b.epub:20") })).savedText).toBe(
-      'Saved: "Book A", chapter 2, sentence 5, 1:15 (3 s ago). Pick the same EPUB file to resume.',
-    );
-  });
-  it("asks for the same file when no book is open", () => {
-    expect(deriveView(snap({ book: undefined, saved: savedFor("a.epub:10") })).savedText).toContain(
-      "Pick the same EPUB file to resume.",
+  it("shows only the age of the save", () => {
+    expect(deriveView(snap({ saved: savedFor("a.epub:10") })).savedText).toBe("Saved just now");
+    expect(deriveView(snap({ saved: { ...savedFor("a.epub:10"), savedAt: NOW - 120_000 } })).savedText).toBe(
+      "Saved 2 min ago",
     );
   });
 });
@@ -296,11 +322,19 @@ describe("deriveView: header and welcome", () => {
 
 describe("chapterNameText", () => {
   const chapters = [
-    { index: 0, label: "Cover" },
-    { index: 2, label: "Chapter Two" },
+    { index: 0, label: "1. Cover" },
+    { index: 2, label: "3. Chapter Two" },
+    { index: 3, label: "4. (no title)" },
+    { index: 4, label: "5. 1. Intro" },
+    { index: 5, label: "Plain" },
   ];
-  it("finds the label by chapter index, not by position", () => {
+  it("finds the title by chapter index, not by position", () => {
     expect(chapterNameText(chapters, 2)).toBe("Chapter Two");
+  });
+  it("removes only the picker prefix and keeps the no-title fallback", () => {
+    expect(chapterNameText(chapters, 3)).toBe("(no title)");
+    expect(chapterNameText(chapters, 4)).toBe("1. Intro");
+    expect(chapterNameText(chapters, 5)).toBe("Plain");
   });
   it("is empty for an unknown index or no chapters", () => {
     expect(chapterNameText(chapters, 1)).toBe("");

@@ -49,7 +49,8 @@ test("open and remember: chapters, restore after reload, forget", async ({ page 
   await openSheet(page, "book");
   await page.locator("#chapter").selectOption("2");
   await expect(page.locator("#chapter-name")).not.toHaveText(firstName);
-  await expect(page.locator("#chapter-name")).toHaveText(/Chapter Two$/);
+  await expect(page.locator("#chapter-name")).toHaveText(/^Chapter Two$/);
+  await expect(page.locator("#chapter option:checked")).toHaveText(/^\d+\. Chapter Two$/);
   await page.locator("#chapter").selectOption("1");
   await expect(page.locator("#book")).toContainText(BOOK_TITLE);
   await expect(page.locator("#chapter")).toContainText("Chapter One");
@@ -134,6 +135,10 @@ test("preview: after a reload the saved chapter text shows in the resume state",
   await page.reload();
   await expect(page.locator("#book")).toContainText("restored from this device");
   await expect(page.locator("#primary")).toHaveAttribute("data-state", "resume");
+  await expect(page.locator("#saved")).toBeVisible();
+  await expect(page.locator("#saved")).toHaveText(/^Saved (just now|\d+ min ago)$/);
+  expect(await page.evaluate(() => document.getElementById("primary")?.nextElementSibling?.id)).toBe("saved");
+  await expect(page.locator("#stats")).toHaveText("");
   await expect(page.locator("#text")).toContainText(sentenceText(2, 1));
   await expect(page.locator("#text .current")).toHaveCount(0);
   expect(await audioSource(page)).toBe("");
