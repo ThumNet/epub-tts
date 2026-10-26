@@ -6,6 +6,7 @@ import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
 import { chapterNameText, deriveView, type ControlsView, type Snapshot } from "./view";
+import { initSheets, type Sheets } from "./sheets";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -141,6 +142,8 @@ export function createShell(): Shell {
     voiceStatus.textContent = view.voiceStatusText;
     titleElement.textContent = view.titleText;
     document.body.dataset["book"] = view.welcomeVisible ? "none" : "open";
+    // Closing is a reaction to state. Render never opens a sheet. A Book sheet reopened during a pending Forget must not stay over the welcome.
+    if (view.welcomeVisible) sheets?.close("sheet-book");
   }
 
   /** What `notifyChange` draws: the controls, then the settings view. Before `bind` there is no engine to read. */
@@ -392,6 +395,7 @@ export function createShell(): Shell {
   }
 
   let copyStatusTimer: number | undefined;
+  let sheets: Sheets | undefined;
   function showCopyStatus(message: string): void {
     ui.copyStatus = message;
     drawTexts();
@@ -404,10 +408,13 @@ export function createShell(): Shell {
 
   function registerControlListeners(): void {
     const { library, playback, voices, bookStore } = engine();
+    sheets = initSheets();
+    const sheetControl = sheets;
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       // Clear the input so picking the same file again fires a new change event. The File object stays valid.
       fileInput.value = "";
+      if (file) sheetControl.close("sheet-book");
       library.pick(file);
     });
 
@@ -415,6 +422,7 @@ export function createShell(): Shell {
     audio.addEventListener("pause", () => hooks.notifyChange());
 
     forgetButton.addEventListener("click", () => {
+      sheetControl.close("sheet-book");
       library.forget();
     });
 

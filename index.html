@@ -16,6 +16,22 @@
   </head>
   <body data-book="none">
     <main class="screen">
+      <header>
+        <div class="titles">
+          <div id="title" class="title"></div>
+          <div id="chapter-name" class="chapter-name"></div>
+        </div>
+        <button id="open-book" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Book" title="Book">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z" /><path d="M4 21V5" /></svg>
+        </button>
+        <button id="open-voice" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Voice and speed" title="Voice and speed">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 9v6h4l5 4V5L8 9z" /><path d="M17 8a5 5 0 0 1 0 8" /></svg>
+        </button>
+        <button id="open-diagnostics" class="icon-button" type="button" aria-haspopup="dialog" aria-label="Diagnostics" title="Diagnostics">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+        </button>
+      </header>
+
       <div id="welcome" class="welcome">
         <h1>epub-tts</h1>
         <p>Listen to any EPUB, read aloud on your device.</p>
@@ -23,10 +39,6 @@
       </div>
 
       <div class="reader">
-        <header>
-          <div id="title" class="title"></div>
-          <div id="chapter-name" class="chapter-name"></div>
-        </header>
         <div id="text"></div>
         <div id="stats">Idle.</div>
         <div class="controls">
@@ -44,50 +56,69 @@
       </div>
     </main>
 
-    <section id="sheet-book">
-      <h2>Book and chapters</h2>
-      <label class="open-button secondary" for="file">Open another book</label>
-      <input id="file" class="visually-hidden" type="file" accept=".epub,application/epub+zip" />
-      <div id="book"></div>
-      <button id="forget-book" type="button" hidden>Forget this book</button>
-      <label for="chapter">Chapter</label>
-      <div class="row">
-        <button id="chapter-prev" type="button" aria-label="Previous chapter" title="Previous chapter" disabled>&#9664; Prev</button>
-        <select id="chapter" disabled></select>
-        <button id="chapter-next" type="button" aria-label="Next chapter" title="Next chapter" disabled>Next &#9654;</button>
-      </div>
-    </section>
+    <input id="file" class="visually-hidden" type="file" accept=".epub,application/epub+zip" />
 
-    <section id="sheet-voice">
-      <h2>Voice and speed</h2>
-      <label for="voice">Voice</label>
-      <select id="voice"></select>
-      <div class="row">
+    <dialog id="sheet-book" aria-labelledby="h-book">
+      <div class="sheet-head">
+        <h2 id="h-book">Book and chapters</h2>
+        <button class="sheet-close" type="button">Close</button>
+      </div>
+      <div class="sheet-body">
+        <div id="book"></div>
+        <label class="open-button secondary" for="file">Open another book</label>
+        <div class="field">
+          <label for="chapter">Chapter</label>
+          <select id="chapter" disabled></select>
+          <div class="row chapter-nav">
+            <button id="chapter-prev" type="button" disabled>Previous chapter</button>
+            <button id="chapter-next" type="button" disabled>Next chapter</button>
+          </div>
+        </div>
+        <button id="forget-book" type="button" hidden>Forget this book</button>
+      </div>
+    </dialog>
+
+    <dialog id="sheet-voice" aria-labelledby="h-voice">
+      <div class="sheet-head">
+        <h2 id="h-voice">Voice and speed</h2>
+        <button class="sheet-close" type="button">Close</button>
+      </div>
+      <div class="sheet-body">
+        <div class="field">
+          <label for="voice">Voice</label>
+          <select id="voice"></select>
+        </div>
         <span id="voice-status" role="status">Checking voice...</span>
-        <button id="voice-download" type="button" disabled>Download</button>
-        <button id="voice-remove" type="button" disabled>Remove</button>
+        <div class="row">
+          <button id="voice-download" type="button" disabled>Download</button>
+          <button id="voice-remove" type="button" disabled>Remove</button>
+        </div>
+        <div class="field">
+          <span>Speed</span>
+          <div class="speed">
+            <button id="speed-down" type="button" aria-label="Slower" title="Slower">&minus;</button>
+            <span id="speed-label">1.00x</span>
+            <button id="speed-up" type="button" aria-label="Faster" title="Faster">+</button>
+          </div>
+          <button id="speed-reset" type="button">Reset to 1x</button>
+        </div>
       </div>
-      <div class="row">
-        <span>Speed</span>
-        <button id="speed-down" type="button" aria-label="Slower" title="Slower">&minus;</button>
-        <span id="speed-label">1.00x</span>
-        <button id="speed-up" type="button" aria-label="Faster" title="Faster">+</button>
-        <button id="speed-reset" type="button">Reset to 1x</button>
-      </div>
-    </section>
+    </dialog>
 
-    <section>
-      <details id="diagnostics">
-        <summary>Diagnostics</summary>
+    <dialog id="diagnostics" aria-labelledby="h-diag">
+      <div class="sheet-head">
+        <h2 id="h-diag">Diagnostics</h2>
+        <button class="sheet-close" type="button">Close</button>
+      </div>
+      <div class="sheet-body">
         <div class="row">
           <button id="copy-log" type="button">Copy log</button>
           <span id="copy-status" role="status"></span>
         </div>
         <pre id="log"></pre>
-      </details>
-    </section>
-
-    <footer id="app-version"></footer>
+        <div id="app-version"></div>
+      </div>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

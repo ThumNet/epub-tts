@@ -420,3 +420,52 @@ Not checked visually: no screenshot. The amber and outlined button styles, the i
 ### Attempt 2
 
 Fix: pause during buffering left the button on "Pause". At a segment end the audio is already paused, so `audio.pause()` fires no `pause` event and nothing redrew. `pauseFromMediaSession` and `playFromMediaSession` in `src/engine/playback.ts` now call `hooks.notifyChange()` after they set `wantPlaying`. I chose the engine fix over a redraw in the click handler. The lock screen and headphone controls call the same functions, so they had the same bug. The change is two calls to the existing hook, no new API. Unit tests in `tests/unit/playback.test.ts`: pause notifies once and clears `wantPlaying`, play sets `wantPlaying` and notifies once. No e2e test: the mock worker has no delay setting, so buffering cannot be reproduced there. typecheck (0 cycles), build (no mock strings in `dist`), `npm test` (233), build:e2e and `npm run test:e2e` (16 passed, run twice) are green.
+
+## Step 4 result
+
+Files: `index.html`, `src/styles.css`, `src/ui/sheets.ts` (new), `src/ui/shell.ts`, `tests/e2e/fixtures.ts`, `tests/e2e/app.spec.ts`, this plan. `src/engine` is untouched.
+
+Markup:
+- The three plain sections are now `<dialog>` elements: `#sheet-book`, `#sheet-voice`, `#diagnostics`. Each has `aria-labelledby` (`#h-book`, `#h-voice`, `#h-diag`) and a `.sheet-close` button ("Close", `type="button"`, 44 px minimum).
+- The openers are icon buttons `#open-book` (aria-label "Book"), `#open-voice` ("Voice and speed") and `#open-diagnostics` ("Diagnostics"), all with `aria-haspopup="dialog"`.
+- The `header` moved out of `.reader` to the top of `main.screen`. It stays visible in the welcome state, so Voice and speed and Diagnostics open from the welcome screen. `#open-book` is hidden when `body[data-book="none"]`.
+- `#file` moved out of the Book sheet to a sibling after `main`, so the welcome label works while the dialog is closed.
+- Book sheet: `#book`, "Open another book" label, `#chapter`, `#chapter-prev`, `#chapter-next` (text "Previous chapter", "Next chapter"), `#forget-book`. Voice sheet: `#voice`, `#voice-status`, download, remove, `#speed-down`, `#speed-label`, `#speed-up`, `#speed-reset`. Diagnostics sheet: `#copy-log`, `#copy-status`, `#log`, `#app-version` (was the page footer). All ids are kept.
+- No speed control remains on the main screen.
+
+Code: `initSheets()` in `src/ui/sheets.ts`, called from `registerControlListeners`. It opens with `showModal()`, closes with the Close button, a click whose target is the dialog itself (the backdrop), and the native Escape. A `close` listener focuses the opener, for every way of closing. `render()` and `UiState` do not know the sheets. Picking a file and Forget close the Book sheet (`sheets.close`).
+
+CSS: slide-up animation (`slide-up`, 0.25 s) on `dialog[open]`, `::backdrop`, and a centred 42rem dialog at 700 px and wider. No close animation. Reduced motion is step 6.
+
+Fallback: `showModal` is feature-detected. Without it the opener sets the `open` attribute and Close removes it, then fires `close` so focus still returns. That path has no modality, no Escape and no backdrop. It was not run in any browser, because both test browsers support `<dialog>`.
+
+Not done: the welcome state has no separate version line. `#app-version` exists once, in the Diagnostics sheet, which opens from the welcome state.
+
+e2e edits (every one):
+- `fixtures.ts`: new `openSheet`, `closeSheet`, `sheetDialog`, `sheetOpener`. `generateChapter` opens the Book sheet to pick the chapter and closes it before clicking `#primary`, because an open modal makes the page inert.
+- "open and remember": the chapter picks and the `#book` and `#chapter` assertions run inside the open Book sheet. After reload the Book sheet opens for the `#forget-book` assertions. After Forget the test asserts the sheet closed.
+- "generate and play": the speed clicks run inside the Voice sheet, then it closes.
+- "stop": the chapter pick runs inside the Book sheet, then it closes.
+- "chapter navigation": Slower runs in the Voice sheet. The Book sheet is open for the Previous and Next assertions and clicks.
+- "continuous playback": the four Faster clicks run in the Voice sheet, then it closes.
+- "jump": Slower runs in the Voice sheet, then it closes.
+- "diagnostics": opens the sheet (was a `<summary>` click). It also asserts that Escape closes it and that focus returns to the opener.
+- New: one test per sheet (three) for the opener name, content hidden when closed, visible when open, Escape closes, focus returns, Close button closes, focus returns. New: backdrop click closes the Voice sheet and returns focus. New: from the welcome state Voice and speed and Diagnostics open and Book is hidden.
+Coverage of the old behaviours is the same. Total 13 tests per browser, 26 runs.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist` (CSS 6.70 kB). `npm test` 233 passed. `npm run build:e2e` OK. `npm run test:e2e` 26 passed (Chromium and Firefox). The first e2e run failed 26/26 because `#voice-status` was a `div` and `byId` needs a `span`. I fixed the markup and the rerun passed.
+
+Not checked visually: no screenshot. The sheet look, the slide-up animation, the backdrop colour, the 85dvh height, the safe-area padding, the header icon size and alignment, the desktop centred dialog, the header in the welcome state, and Safari's focus return are unverified. The backdrop-click test clicks at (2, 2) on the default desktop viewport, where the sheet is centred, so it hits the backdrop. It was not run at a phone size.
+
+### Attempt 2
+
+Fixes for two review findings:
+1. Safe-area padding closed the sheet. The dialog keeps its bottom padding, and a click on that padding targets the dialog. `src/ui/sheets.ts` now closes only when the click point is outside `dialog.getBoundingClientRect()`. I chose geometry over an inner wrapper because it needs no markup change. The wrong comment is fixed. Real insets are not testable in headless browsers, so the e2e dispatches a click on the dialog with a point inside its box and expects the sheet to stay open. The backdrop test now runs at 390x844 and clicks (200, 5).
+2. A Book sheet reopened during a pending Forget stayed over the welcome. `drawControls` in `src/ui/shell.ts` now closes `#sheet-book` when `welcomeVisible`. This only closes, so `render()` still never opens a sheet. New e2e: click Forget and `#open-book` in one task, then expect the welcome visible and the Book sheet hidden.
+
+Also fixed above: `#file` is a sibling after `main`, not inside it.
+
+### Attempt 3
+
+1. The backdrop handler in `src/ui/sheets.ts` now also ignores clicks with `event.detail === 0`. Keyboard and synthetic clicks have detail 0. Real pointer clicks have detail 1 or more, so a Playwright mouse click still closes. I chose `detail` over a (0, 0) coordinate test because (0, 0) is a valid pointer position on the backdrop. New e2e: a dialog click with detail 0 and (0, 0) keeps the sheet open. The padding test now sets `detail: 1`, so it still tests the geometry check.
+2. The Forget e2e now waits for `#forget-book` to be enabled before the same-task Forget and opener clicks, because Forget is rejected until the book is saved.
