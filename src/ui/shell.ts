@@ -2,8 +2,8 @@ import type { Sentence } from "../epub";
 import { log, logText } from "../log";
 import { loadPosition } from "../store";
 import { DEFAULT_VOICE_ID, VOICES, findVoice } from "../voices";
-import { SAVE_INTERVAL_MS } from "../engine/config";
-import { clampSpeed, describePosition } from "../engine/pure";
+import { SAVE_INTERVAL_MS, SPEED_MAX, SPEED_MIN } from "../engine/config";
+import { describePosition, stepSpeed } from "../engine/pure";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -61,7 +61,8 @@ export function createShell(): Shell {
   const voiceStatus = byId("voice-status", HTMLSpanElement);
   const voiceDownloadButton = byId("voice-download", HTMLButtonElement);
   const voiceRemoveButton = byId("voice-remove", HTMLButtonElement);
-  const speedInput = byId("speed", HTMLInputElement);
+  const speedDownButton = byId("speed-down", HTMLButtonElement);
+  const speedUpButton = byId("speed-up", HTMLButtonElement);
   const speedLabel = byId("speed-label", HTMLSpanElement);
   const speedResetButton = byId("speed-reset", HTMLButtonElement);
   const generateButton = byId("generate", HTMLButtonElement);
@@ -227,8 +228,9 @@ export function createShell(): Shell {
 
   function showSpeed(): void {
     const { settings } = engine();
-    speedInput.value = String(settings.speed);
     speedLabel.textContent = `${settings.speed.toFixed(2)}x`;
+    speedDownButton.disabled = settings.speed <= SPEED_MIN;
+    speedUpButton.disabled = settings.speed >= SPEED_MAX;
   }
 
   function setSpeed(value: number, reason: string): void {
@@ -272,14 +274,8 @@ export function createShell(): Shell {
 
   function registerSettingsListeners(): void {
     const { settings, mediaSession, voices } = engine();
-    speedInput.addEventListener("input", () => {
-      const value = Number(speedInput.value);
-      if (Number.isFinite(value)) speedLabel.textContent = `${clampSpeed(value).toFixed(2)}x`;
-    });
-    speedInput.addEventListener("change", () => {
-      const value = Number(speedInput.value);
-      if (Number.isFinite(value)) setSpeed(value, "slider");
-    });
+    speedDownButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, -1), "slower"));
+    speedUpButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, 1), "faster"));
     speedResetButton.addEventListener("click", () => setSpeed(1, "reset"));
     audio.addEventListener("ratechange", () => {
       mediaSession.resetPositionState();

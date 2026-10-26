@@ -252,3 +252,26 @@ Steps 2-5 do not depend on each other after step 1. Keep the order to keep revie
 ## Open questions for the user
 
 None.
+
+## Step 0 result
+
+Done. The speed slider is now two buttons.
+
+Files changed:
+
+- `index.html`: removed `#speed` and its CSS rule. Added `#speed-down` ("−", aria-label "Slower") and `#speed-up` ("+", aria-label "Faster") with `min-width: 44px; min-height: 44px`. The `<label for="speed">` became a plain `<span>Speed</span>`.
+- `src/engine/pure.ts`: added `SPEED_STEP` (0.25) and `stepSpeed(current, direction)`. It returns `roundSpeed(current + direction * 0.25)`.
+- `src/ui/shell.ts`: removed the slider ref and the `input` and `change` listeners. Added click listeners with reasons `slower` and `faster`. `showSpeed` writes the label and both disabled states, so it is the one place for them.
+- `tests/unit/pure.test.ts`: three `stepSpeed` cases (steps, both limits, off-grid 1.35 gives 1.6 and 1.1).
+- `tests/e2e/app.spec.ts`: see below.
+
+Test counts: unit 166 passed (12 files). e2e 14 of 14 passed, twice. `typecheck`, `build` and `build:e2e` pass. `dist` has no "mock" string.
+
+e2e edits:
+
+- "generate and play": `fill("1.5")` became two `#speed-up` clicks.
+- "chapter navigation": `fill("0.75")` became one `#speed-down` click, plus `#speed-down` `toBeDisabled()` (0.75x).
+- "continuous playback": `fill("2")` became four `#speed-up` clicks, plus a `2.00x` label check and `#speed-up` `toBeDisabled()`.
+- "jump": `fill("0.75")` became one `#speed-down` click.
+
+All tests start at 1.0x, so no `#speed-reset` press was needed.
