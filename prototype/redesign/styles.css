@@ -1,7 +1,7 @@
 :root {
   color-scheme: light dark;
   --bg: #faf7f2; --surface: #ffffff; --text: #2a2520; --muted: #6e665c;
-  --accent: #b86e00; --on-accent: #ffffff; --highlight: #fde7bf; --border: #e4ddd2;
+  --accent: #9a5a00; --on-accent: #ffffff; --highlight: #fde7bf; --border: #e4ddd2;
   --danger: #b3261e;
   --font-read: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --font-ui: system-ui, -apple-system, sans-serif;

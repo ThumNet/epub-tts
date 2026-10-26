@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#111111" />
+    <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="epub-tts" />
@@ -11,32 +12,7 @@
     <link rel="icon" href="%BASE_URL%icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="%BASE_URL%icon.svg" />
     <title>epub-tts</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      body { margin: 0; padding: 12px; background: #111; color: #eee; line-height: 1.5; }
-      h1 { font-size: 1.1rem; margin: 0 0 8px; }
-      section { margin: 12px 0; padding: 10px; background: #1b1b1b; border-radius: 8px; }
-      label { display: block; margin: 6px 0 2px; font-size: 0.85rem; color: #aaa; }
-      select, input, button { font: inherit; padding: 8px; margin: 2px 0; max-width: 100%; }
-      button { min-height: 44px; }
-      audio { width: 100%; margin-top: 8px; }
-      #text { max-height: 30vh; overflow-y: auto; }
-      #text span { cursor: pointer; }
-      #text span.current { background: #35507a; border-radius: 3px; }
-      #text p { margin: 0 0 0.6em; }
-      pre { margin: 0; font-size: 0.8rem; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word; -webkit-overflow-scrolling: touch; }
-      details summary { cursor: pointer; font-weight: bold; min-height: 44px; display: flex; align-items: center; }
-      #copy-log { min-width: 120px; }
-      #chapter { flex: 1; min-width: 0; min-height: 44px; }
-      #chapter-prev, #chapter-next { min-width: 44px; min-height: 44px; }
-      #speed-down, #speed-up { min-width: 44px; min-height: 44px; }
-      #speed-label { min-width: 3.5em; font-variant-numeric: tabular-nums; }
-      #voice-status { font-size: 0.85rem; color: #aaa; }
-      #copy-status { font-size: 0.85rem; color: #8c8; }
-      footer { margin: 12px 0 0; font-size: 0.8rem; color: #888; text-align: center; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-      #stats { font-variant-numeric: tabular-nums; }
-    </style>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <h1>epub-tts</h1>

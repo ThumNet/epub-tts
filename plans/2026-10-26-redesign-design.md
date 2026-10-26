@@ -203,7 +203,7 @@ Define on `:root`. Override in `@media (prefers-color-scheme: dark)`. Set `color
 | `--surface` | `#ffffff` | `#211e18` | Sheets, control bar |
 | `--text` | `#2a2520` | `#ece6dc` | Reading text |
 | `--muted` | `#6e665c` | `#a39a8c` | Status, labels |
-| `--accent` | `#b86e00` | `#f0a63a` | Primary button, focus ring |
+| `--accent` | `#9a5a00` | `#f0a63a` | Primary button, focus ring |
 | `--on-accent` | `#ffffff` | `#1a1408` | Primary button text |
 | `--highlight` | `#fde7bf` | `#4a3612` | Current sentence |
 | `--border` | `#e4ddd2` | `#3a342b` | Dividers |
@@ -326,3 +326,31 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 ## Open questions for the user
 
 None. The user answered all of them (see "Answered", items 12 to 15).
+
+## Step 1 result
+
+Files: `src/styles.css` (new), `index.html` (inline `<style>` removed, stylesheet link added, theme-color metas). No TypeScript, markup, id or e2e change.
+
+CSS approach: `<link rel="stylesheet" href="/src/styles.css" />` in the root `index.html`, the same form as the `/src/main.ts` script. Vite processes it and rewrites it with the production base. `dist/index.html` has `href="/epub-tts/assets/index-CjTZqEP4.css"`. No `import` in `main.ts` is needed, so no TypeScript file changes.
+
+Tokens (`:root`, light values; dark values in `@media (prefers-color-scheme: dark)`, no `data-theme`): `--bg`, `--surface`, `--text`, `--muted`, `--accent`, `--on-accent`, `--highlight`, `--border`, `--danger`, `--ok`, `--focus-ring`, `--radius`, `--radius-sm`, `--space-1..4`, `--font-read`, `--font-ui`. `color-scheme: light dark`. Light bg `#faf7f2`, dark bg `#16140f`, copied from the prototype. `--ok` and `--focus-ring` are new (copy-status green, focus outline). `--danger` is defined but unused until later steps.
+
+Theme-color metas: `#faf7f2` (light) and `#16140f` (dark), each with a `media` query.
+
+Dist assets (build): `index-DDzvAxMV.js` 414.19 kB, `index-CjTZqEP4.css` 3.35 kB (gzip 1.37 kB, new), `ort.wasm.min` 141.89 kB, `piper` 88.80 kB, `worker` 16.11 kB. `dist/index.html` 3.12 kB. No mock strings in `dist`.
+
+Old-page styling kept: `#generate` is the amber primary button, `#text` uses the serif stack, `#text span.current` uses `--highlight`. Not checked visually (no browser screenshot run): both schemes, the select chevron and contrast. Check these on the phone or with the prototype shots.
+
+e2e impact: none. 14/14 passed twice with no test edits.
+
+### Attempt 2
+
+Fix: the light `--accent` (and `--focus-ring`) changed from `#b86e00` to `#9a5a00`. White text on `#b86e00` was about 3.99:1, below AA. Dark values are unchanged. The prototype light token changed the same way, and the token table in section 3 shows the new value.
+
+Ratios, from sRGB relative luminance (`#9a5a00` has L = 0.2126 x 0.3231 + 0.7152 x 0.1022 = 0.1418):
+- White `--on-accent` on `--accent` (primary button): 1.05 / 0.1918 = 5.47:1.
+- `--accent` text or focus ring on `--bg` `#faf7f2` (L 0.932): 0.982 / 0.1918 = 5.12:1.
+- `--accent` on `--surface` `#ffffff`: 5.47:1.
+- Dark `--accent` `#f0a63a` on dark `--bg`: unchanged, 8.91:1 for the button text.
+
+All uses of `--accent` in light mode (button fill, link text, focus ring) are at least 4.5:1. The focus ring needs only 3:1. The current-sentence highlight uses `--highlight`, not `--accent`.

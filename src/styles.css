@@ -1,0 +1,236 @@
+:root {
+  color-scheme: light dark;
+  --bg: #faf7f2;
+  --surface: #ffffff;
+  --text: #2a2520;
+  --muted: #6e665c;
+  --accent: #9a5a00;
+  --on-accent: #ffffff;
+  --highlight: #fde7bf;
+  --border: #e4ddd2;
+  --danger: #b3261e;
+  --ok: #2e7d32;
+  --focus-ring: #9a5a00;
+  --radius: 12px;
+  --radius-sm: 3px;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --font-read: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-ui: system-ui, -apple-system, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16140f;
+    --surface: #211e18;
+    --text: #ece6dc;
+    --muted: #a39a8c;
+    --accent: #f0a63a;
+    --on-accent: #1a1408;
+    --highlight: #4a3612;
+    --border: #3a342b;
+    --danger: #f2877f;
+    --ok: #8fcf93;
+    --focus-ring: #f0a63a;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: var(--space-3);
+  max-width: 42rem;
+  margin-inline: auto;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.1rem;
+  margin: 0 0 var(--space-2);
+}
+
+section {
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+label {
+  display: block;
+  margin: 6px 0 2px;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+select,
+input,
+button {
+  font: inherit;
+  margin: 2px 0;
+  max-width: 100%;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+input {
+  padding: var(--space-2);
+  background: var(--bg);
+}
+
+select {
+  min-height: 44px;
+  padding: 0 2.5rem 0 var(--space-3);
+  background-color: var(--bg);
+  appearance: none;
+  -webkit-appearance: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 14px;
+}
+
+select#voice {
+  width: 100%;
+}
+
+button {
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#generate {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+audio {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+#text {
+  max-height: 30vh;
+  overflow-y: auto;
+  font-family: var(--font-read);
+  font-size: 1.125rem;
+  line-height: 1.6;
+}
+
+#text span {
+  cursor: pointer;
+}
+
+#text span.current {
+  background: var(--highlight);
+  border-radius: var(--radius-sm);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+#text p {
+  margin: 0 0 0.6em;
+}
+
+pre {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-overflow-scrolling: touch;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: bold;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+#copy-log {
+  min-width: 120px;
+}
+
+#chapter {
+  flex: 1;
+  min-width: 0;
+}
+
+#chapter-prev,
+#chapter-next,
+#speed-down,
+#speed-up {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+#speed-label {
+  min-width: 3.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+#voice-status {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+#copy-status {
+  font-size: 0.875rem;
+  color: var(--ok);
+}
+
+footer {
+  margin: var(--space-3) 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+#stats {
+  font-variant-numeric: tabular-nums;
+}
