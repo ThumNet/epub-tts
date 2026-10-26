@@ -26,6 +26,7 @@ All decisions are settled. No open questions remain.
 - Prototype first, approved from screenshots only.
 - All speed controls live in the "Voice and speed" sheet. The main screen has none.
 - The native chapter picker stays in the Book sheet.
+- Chapter Previous and Next move into the Book sheet (user decision 2026-10-26, after seeing the prototype). This reverses the earlier "chapter Previous and Next always visible". The main screen has none.
 - The engine exposes `wantPlaying` in `PlaybackView`. This is the one allowed engine change.
 
 ## Verdict
@@ -47,14 +48,13 @@ These are settled. Do not reopen them.
 5. **Main screen** always shows:
    - the book title and the chapter name;
    - the reading text, which fills the free height and scrolls inside;
-   - chapter Previous and Next;
-   - one primary button: Listen, Resume, Pause or Play. A small Stop button shows while generation runs. Stop is today's Cancel;
+   - one primary button, full bar width: Listen, Resume, Pause or Play. (Chapter Previous and Next are not here. They moved into the Book sheet, item 15.) A small Stop button shows while generation runs. Stop is today's Cancel;
    - the status line (`#stats`), small.
 6. **Resume.** When the open book has a saved position, Resume ("Resume at chapter N, 12 min ago") is the main action. "Listen from chapter start" becomes secondary.
 7. **Audio.** An own Play/Pause replaces the native `<audio controls>` (`index.html:72`). The audio element stays, without controls. Media session lock screen controls stay. No progress bar. No new features.
 8. **First run** with no book shows a welcome and a large "Open an EPUB" button.
 9. **Sheets.**
-   - Book and chapters: open another book, chapter list, Forget.
+   - Book and chapters: open another book, chapter list, Previous chapter and Next chapter buttons, Forget.
    - Voice and speed: voice select, download, remove, status, and all speed controls (Slower, speed label, Faster, Reset to 1x).
    - Diagnostics: copy log, log, version.
 10. **Tests.** Element ids and e2e tests may change. The rewritten e2e tests keep the same behaviours: startup, open and remember, generate and play, chapter navigation, continuous playback, jump, diagnostics.
@@ -62,6 +62,7 @@ These are settled. Do not reopen them.
 12. **Engine flag (answered).** Yes. The engine exposes `wantPlaying` as one read-only field in `PlaybackView` (`src/engine/playback.ts`, `view()` and the `PlaybackView` type). It is the one allowed engine change. Step 3 adds it with a unit test. The primary-button derivation uses it to avoid the flicker at segment changes.
 13. **Speed (answered).** All speed controls move into the Voice sheet, renamed "Voice and speed": Slower, speed label, Faster and Reset to 1x. The main screen shows no speed controls. The user chose this on 2026-10-26, after seeing the earlier answer "speed buttons always visible". This reverses that earlier answer.
 14. **Chapter picker (answered).** The native `<select>` in the Book sheet is accepted.
+15. **Chapter Previous and Next (answered).** They move from the main screen into the Book sheet. The user chose this on 2026-10-26, after seeing the prototype: "you would not change chapter that often". This reverses the earlier answer "chapter Previous and Next always visible". The buttons are text buttons ("Previous chapter", "Next chapter"), at least 44 px high, next to the native chapter select. The ids `#chapter-prev` and `#chapter-next` stay. The lock screen previous and next track actions still map to chapters through the media session. The header keeps the chapter name.
 
 ## 1. Sheet mechanism
 
@@ -156,7 +157,7 @@ Keep that rule. The primary label is the fixed word "Resume". The sub-line under
   1. Header: book title (one line, ellipsis), chapter name, and two icon buttons (Book, Voice and speed). Diagnostics opens from the Book sheet footer and from the version line.
   2. `#text`: `flex: 1; min-height: 0; overflow-y: auto`. This replaces `max-height: 30vh` (`index.html:23`).
   3. Status line `#stats`: one line, small, muted.
-  4. Control bar: Previous, primary button (largest), Next, and Stop when shown. No speed controls.
+  4. Control bar: the primary button only. It fills the bar width and is the largest control. Stop shows beside the resume text while generating. No chapter buttons and no speed controls (both live in sheets).
 - Safe areas: `padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)` with a minimum, through `max()`. `viewport-fit=cover` is already set (`index.html:5`). The control bar gets the bottom inset, so it sits above the home indicator.
 - Touch targets: every button at least 44x44 px (today `index.html:21`, `:31-32`). The primary button is at least 56 px high.
 - Desktop (`min-width: 700px`): the same column, `max-width: 42rem`, centred. The sheets become centred dialogs of the same width, not full-width bottom sheets. No second column.
@@ -207,11 +208,11 @@ The values are a start for the prototype. The screenshot review sets the final v
 | new | Main header, chapter name | `#chapter-name` (label of `ui.selectedChapter` in `ui.chapters`) |
 | `#forget-book` (:49) | Book sheet | kept |
 | `#chapter` select (:53) | Book sheet, as the chapter list. Keep the native `<select>`. | kept |
-| `#chapter-prev`, `#chapter-next` (:52, :54) | Main control bar | kept |
+| `#chapter-prev`, `#chapter-next` (:52, :54) | Book sheet (`#sheet-book`), as text buttons "Previous chapter" and "Next chapter" next to `#chapter`. Moved from the main screen (item 15). | kept |
 | `#voice` (:57) | Voice and speed sheet | kept |
 | `#voice-status`, `#voice-download`, `#voice-remove` (:59-61) | Voice and speed sheet | kept |
 | `#generate` (:64) | Replaced by `#primary` (states `listen`) and `#listen-start` (secondary in `resume`) | `#primary`, `#listen-start` |
-| `#cancel` (:65) | Main control bar | `#stop` |
+| `#cancel` (:65) | Main control area, under the primary button | `#stop` |
 | `#resume` (:66) | Merged into `#primary` (state `resume`) | removed |
 | `#stats` (:68) | Main, above the control bar | kept |
 | `#audio` (:72) | Stays in the DOM, no `controls`, `hidden` | kept |
@@ -249,9 +250,9 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 |---|---|---|---|
 | 0 | Prototype: static HTML files in `prototype/` (not in the Vite build), with fake text and fixed states. The main screen has no speed controls. The Voice and speed sheet holds them. A screenshot script writes 2 sizes x 2 schemes x 9 views. The user approves. | The prototype promises something the engine cannot do (for example G1). | Each prototype state maps to one row in section 2. No state without a row. |
 | 1 | Tokens and `src/styles.css`, light and dark, two `theme-color` metas, with the current markup. No id change. | A broken style hides a control (`hidden` attribute overridden by `display`). | e2e unchanged. Add `[hidden] { display: none !important; }`. `dist` asset count becomes five. |
-| 2 | Main screen layout and the welcome state. Move elements per section 4, except the three sheets (they stay as plain sections at the end of the page for now). `#title`, `#chapter-name`. | Tests that click elements now off screen or covered. | e2e edits limited to locators that moved. Each edit is listed in the PR. |
+| 2 | Main screen layout and the welcome state. Move elements per section 4, except the three sheets (they stay as plain sections at the end of the page for now). `#title`, `#chapter-name`. `#chapter-prev` and `#chapter-next` move to the Book section. | Tests that click elements now off screen or covered. | e2e edits limited to locators that moved. Each edit is listed in the PR. |
 | 3 | Primary state machine in `deriveView`, `loaded` in the snapshot, `#primary`, `#listen-start`, `#stop`. Old `#generate`, `#cancel`, `#resume` are removed. Also adds `wantPlaying` to `PlaybackView` (the one allowed engine change) with a unit test, and rows 2 and 3 use it. | A wrong row order (for example `resume` shown while playing). | Unit table: one case per row and per transition. e2e: `generateChapter` helper uses `#primary`. |
-| 4 | Sheets: Book, Voice and speed, Diagnostics as `<dialog>`. The speed controls move into the Voice and speed sheet and leave the main screen (ids kept). Openers, Close, Escape, backdrop tap, focus return. | A closed dialog hides elements that tests click (`#chapter`, `#forget-book`, `#copy-log`, `#speed-down`, `#speed-up`, `#speed-reset`). | e2e helpers `openSheet(page, "book")` and `closeSheet`. Assertions on `#log` text work on a closed dialog, because the text stays in the DOM. |
+| 4 | Sheets: Book, Voice and speed, Diagnostics as `<dialog>`. The speed controls move into the Voice and speed sheet and leave the main screen (ids kept). Openers, Close, Escape, backdrop tap, focus return. | A closed dialog hides elements that tests click (`#chapter`, `#chapter-prev`, `#chapter-next`, `#forget-book`, `#copy-log`, `#speed-down`, `#speed-up`, `#speed-reset`). | e2e helpers `openSheet(page, "book")` and `closeSheet`. Assertions on `#log` text work on a closed dialog, because the text stays in the DOM. |
 | 5 | Remove `controls` from `#audio`, hide it. Wire Play and Pause through `#primary`. | Lock screen and headphone controls stop working. Audio does not play without controls on some browser. | e2e pause and play via `#primary`. Phone pass item (section 7). |
 | 6 | Polish: safe areas, focus rings, `prefers-reduced-motion`, scroll `block: "center"`, contrast check. Delete `prototype/`. | Layout breaks in standalone PWA mode. | Screenshot script against the real build at the same sizes. Compare with the approved prototype by eye. |
 
@@ -273,6 +274,7 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
   - generate and play: `data-state` goes `starting`, then `pause`. One Pause and one Play click change `audio.paused`;
   - diagnostics: open the sheet, copy, Escape closes it, and focus returns to the opener.
   The quiet-page rule (`fixtures.ts:6-16`) stays: no `console.error` and no page error.
+  - Chapter navigation: the e2e tests that click `#chapter-prev`, `#chapter-next` or use `#chapter` must open the Book sheet first (`openSheet(page, "book")`). The ids stay. The lock screen previous and next track actions are not affected. They still map to chapters through the media session.
   - Speed: the e2e tests that press speed buttons must open the Voice and speed sheet first (`openSheet(page, "voice")`). The ids `#speed-down`, `#speed-up`, `#speed-label` and `#speed-reset` stay, so only the sheet opening is new.
 - **Screenshot script (not a CI test):** `scripts/screenshots.mjs` uses Playwright. Viewports 390x844 and 1280x800. `colorScheme` light and dark (`page.emulateMedia`). It writes PNG files to an ignored folder. In step 0 it opens the prototype states. From step 6 it drives the e2e build with the mock worker to reach the same states.
 
@@ -283,7 +285,7 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 3. **`100dvh`.** Safari changes the toolbar height while scrolling. Because the page does not scroll, `dvh` should stay stable. Check in Safari and in the standalone PWA.
 4. **`<dialog>`.** Needs iOS 15.4 or later. Check Escape-free close (the backdrop tap and Close), focus return, and that the background does not scroll.
 5. **Standalone safe areas.** In the installed PWA there is no Safari toolbar. The top inset covers the status bar and the bottom inset covers the home indicator. Check both orientations.
-6. **Dynamic Type.** Check that the reading text follows the system text size, and that the control bar still fits at the largest size.
+6. **Dynamic Type.** Check that the reading text follows the system text size, and that the control bar still fits at the largest size. The bar now holds one button, so the risk is lower. Check that the two chapter buttons in the Book sheet still fit, or wrap.
 7. **Hidden file input.** Check that the `<label for="file">` opens the iOS file picker from the welcome button and from the Book sheet.
 
 ## 8. Out of scope
@@ -303,4 +305,4 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 
 ## Open questions for the user
 
-None. The user answered all three (see "Answered", items 12 to 14).
+None. The user answered all of them (see "Answered", items 12 to 15).
