@@ -15,13 +15,13 @@ import { createBook } from "./engine/book";
 import type { TextChapter } from "./engine/book";
 import { createVoicesStore } from "./engine/voices-store";
 import { createLibrary } from "./engine/library";
+import { createMediaSession } from "./engine/media-session";
 import {
   MAX_RECOVERY_ATTEMPTS,
   METADATA_TIMEOUT_MS,
   PARAGRAPH_GAP_MS,
   PAUSE_IGNORE_MS,
   SAVE_INTERVAL_MS,
-  SEEK_STEP_S,
   SEGMENT_TARGET_S as DEFAULT_SEGMENT_TARGET_S,
   SEGMENTS_AHEAD,
   SEGMENTS_BEHIND,
@@ -186,6 +186,16 @@ interface ChapterRun {
 
 // The open book and its per-chapter has-text flags. Chapter text reading lives here too.
 const bookStore = createBook({ hooks });
+const mediaSession = createMediaSession({
+  audio,
+  getBookTitle: () => bookStore.opened?.title,
+  actions: {
+    play: () => playFromMediaSession(),
+    pause: () => pauseFromMediaSession(),
+    seek: (seconds) => seekWithinSegment(seconds),
+    navigate: (step) => void navigateChapter(step, "media session"),
+  },
+});
 let loaded: LoadedChapter | undefined;
 // The next chapter, generated in the background while the loaded chapter plays. Not in the audio element yet.
 let pendingChapter: ChapterRun | undefined;
@@ -390,7 +400,7 @@ async function recoverPlayback(attempt: number, token: number): Promise<void> {
       (error: unknown) =>
         log(`recovery: play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
     );
-    navigator.mediaSession.playbackState = "playing";
+    mediaSession.setPlaybackState("playing");
     setTimeout(() => {
       if (stillValid()) log(snapshot("recovery: state 500 ms after play"));
       else log("recovery: 500 ms snapshot skipped, superseded or source changed");
@@ -510,65 +520,12 @@ function seekWithinSegment(seconds: number): void {
   audio.currentTime = target;
 }
 
-function setupMediaSession(): void {
-  const session = navigator.mediaSession;
-  const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
-    ["play", () => playFromMediaSession()],
-    ["pause", () => {
-      wantPlaying = false;
-      watchToken += 1;
-      audio.pause();
-    }],
-    [
-      "seekto",
-      (details) => {
-        if (details.seekTime !== undefined) seekWithinSegment(details.seekTime);
-      },
-    ],
-    ["seekbackward", (d) => seekWithinSegment(audio.currentTime - (d.seekOffset ?? SEEK_STEP_S))],
-    ["seekforward", (d) => seekWithinSegment(audio.currentTime + (d.seekOffset ?? SEEK_STEP_S))],
-    ["previoustrack", () => void navigateChapter(-1, "media session")],
-    ["nexttrack", () => void navigateChapter(1, "media session")],
-  ];
-  for (const [action, handler] of handlers) {
-    try {
-      session.setActionHandler(action, (details) => {
-        log(`media session action: ${action}`);
-        handler(details);
-      });
-    } catch {
-      log(`media session action not supported: ${action}`);
-    }
-  }
-  audio.addEventListener("play", () => (session.playbackState = "playing"));
-  audio.addEventListener("pause", () => (session.playbackState = "paused"));
+function pauseFromMediaSession(): void {
+  wantPlaying = false;
+  watchToken += 1;
+  audio.pause();
 }
-setupMediaSession();
-
-let lastPositionState = 0;
-function updatePositionState(): void {
-  const now = Date.now();
-  if (now - lastPositionState < 1000 || !Number.isFinite(audio.duration)) return;
-  lastPositionState = now;
-  try {
-    navigator.mediaSession.setPositionState({
-      duration: audio.duration,
-      playbackRate: audio.playbackRate,
-      position: Math.min(audio.currentTime, audio.duration),
-    });
-  } catch {
-    // Some browsers reject odd values. Ignore.
-  }
-}
-
-function setMetadata(title: string): void {
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title,
-    artist: bookStore.opened?.title ?? "EPUB TTS",
-    album: "epub-tts",
-    artwork: [{ src: `${import.meta.env.BASE_URL}icon.svg`, sizes: "512x512", type: "image/svg+xml" }],
-  });
-}
+mediaSession.setup();
 
 // ---------------------------------------------------------------- highlight
 
@@ -601,7 +558,7 @@ function highlight(index: number): void {
 
 audio.addEventListener("timeupdate", () => {
   highlight(sentenceAt(audio.currentTime));
-  updatePositionState();
+  mediaSession.updatePositionState();
 });
 
 textElement.addEventListener("click", (event) => {
@@ -647,7 +604,7 @@ function switchSegment(segmentIndex: number, offset: number, play: boolean, reas
   audio.src = url;
   applyPlaybackRate();
   if (offset > 0) audio.currentTime = offset;
-  lastPositionState = 0;
+  mediaSession.resetPositionState();
   if (play) {
     const startedAt = Date.now();
     const promise = audio.play();
@@ -729,7 +686,7 @@ function switchToPendingChapter(play: boolean, reason: string): void {
   ignoreSourceChangePause();
   audio.src = url;
   applyPlaybackRate();
-  lastPositionState = 0;
+  mediaSession.resetPositionState();
   if (play) {
     const startedAt = Date.now();
     const promise = audio.play();
@@ -747,7 +704,7 @@ function switchToPendingChapter(play: boolean, reason: string): void {
   }
   hooks.showChapter(run.chapterIndex);
   hooks.renderChapter(run.sentences);
-  setMetadata(bookStore.opened.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
+  mediaSession.setMetadata(bookStore.opened.chapters[run.chapterIndex]?.label ?? `Chapter ${run.chapterIndex + 1}`);
   highlight(first.startSentence);
   persistPosition("chapter swap");
   dropFarSegments();
@@ -958,7 +915,7 @@ function onSegmentReady(run: ChapterRun): void {
     applyPlaybackRate();
     hooks.showChapter(chapterIndex);
     hooks.renderChapter(sentences);
-    setMetadata(bookStore.opened.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
+    mediaSession.setMetadata(bookStore.opened.chapters[chapterIndex]?.label ?? `Chapter ${chapterIndex + 1}`);
     highlight(segment.startSentence);
     hooks.notifyChange();
     log("segment 1 started");
@@ -1259,8 +1216,8 @@ speedInput.addEventListener("change", () => {
 });
 speedResetButton.addEventListener("click", () => setSpeed(1, "reset"));
 audio.addEventListener("ratechange", () => {
-  lastPositionState = 0;
-  updatePositionState();
+  mediaSession.resetPositionState();
+  mediaSession.updatePositionState();
 });
 
 // (voice state variables are declared with the other state at the top)

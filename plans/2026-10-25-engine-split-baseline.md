@@ -217,3 +217,20 @@ Results: `npm run typecheck` OK (`boundaries OK: 20 files, 45 imports, 0 cycles,
 Same asset list, no new chunk. The e2e build has `index-DuAEKRiE.js` (409.80 kB).
 
 Line counts: `src/main.ts` 1474 (was 1587), `src/engine/library.ts` 198.
+
+## Step 6 result
+
+Step 6 moves the media session code into `src/engine/media-session.ts` (`createMediaSession(deps)`). API: `setup`, `updatePositionState`, `resetPositionState`, `setMetadata`, `setPlaybackState`. `main.ts` calls `mediaSession.setup()` at the old `setupMediaSession()` position. `playFromMediaSession`, `seekWithinSegment` and the pause action (`pauseFromMediaSession`) stay in `main.ts`.
+
+Results: `npm run typecheck` OK (`boundaries OK: 21 files, 48 imports, 0 cycles, 10 engine files checked`), `npm test` 158 passed (11 files, new `media-session.test.ts`, 15 tests). `dist` has no `mock` string. `npm run test:e2e`: 13 of 14 passed; Firefox "continuous playback" timed out twice (see the report).
+
+| File in `dist/assets` | Size (vite, kB) | Step 5b |
+|---|---|---|
+| `index-D9LJe0P2.js` | 410.08 | 409.62 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-BzMGaTTM.js` (410.26 kB).
+
+Line counts: `src/main.ts` 1431 (was 1474), `src/engine/media-session.ts` 91.
