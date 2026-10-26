@@ -399,11 +399,6 @@ button:disabled {
   outline-offset: 2px;
 }
 
-audio {
-  width: 100%;
-  margin-top: var(--space-2);
-}
-
 #text {
   flex: 1;
   min-height: 0;

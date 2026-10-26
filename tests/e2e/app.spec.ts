@@ -94,6 +94,10 @@ test("generate and play: source, time, segment swap, highlight, speed", async ({
   await generateChapter(page, 1);
   await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
   expect(await audioSource(page)).not.toBe("");
+  await expect(page.locator("#audio")).not.toHaveAttribute("controls");
+  await expect(page.locator("audio[controls]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(play|pause)$/i })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /^(play|pause)$/i })).toHaveAttribute("id", "primary");
   // Speed 1x: a segment lasts at least 4 s, so the time is seen above 0.3 s while polling every 100 ms.
   await expect.poll(() => audioTime(page), FAST_POLL).toBeGreaterThan(0.3);
   await expect(page.locator("#text .current")).toBeVisible();

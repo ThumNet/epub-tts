@@ -469,3 +469,19 @@ Also fixed above: `#file` is a sibling after `main`, not inside it.
 
 1. The backdrop handler in `src/ui/sheets.ts` now also ignores clicks with `event.detail === 0`. Keyboard and synthetic clicks have detail 0. Real pointer clicks have detail 1 or more, so a Playwright mouse click still closes. I chose `detail` over a (0, 0) coordinate test because (0, 0) is a valid pointer position on the backdrop. New e2e: a dialog click with detail 0 and (0, 0) keeps the sheet open. The padding test now sets `detail: 1`, so it still tests the geometry check.
 2. The Forget e2e now waits for `#forget-book` to be enabled before the same-task Forget and opener clicks, because Forget is rejected until the book is saved.
+
+## Step 5 result
+
+Files: `index.html`, `src/styles.css`, `tests/e2e/app.spec.ts`. The engine and `src/ui/shell.ts` are unchanged.
+
+Change: `<audio id="audio" preload="auto" hidden>`. The `controls` attribute is gone. The `audio { width; margin-top }` rule is removed from the CSS, so the old audio bar leaves no gap in the control bar. Play and Pause already ran through `#primary` (step 3).
+
+Decision on hiding: I follow the record (element map, row `#audio`): no `controls`, plus `hidden`. An `<audio>` without `controls` is not rendered by default anyway, so `hidden` adds no new behaviour. I did not use `display: none` in CSS or `.visually-hidden`. The element stays in the DOM and keeps its JS API (`play()`, `src`, `currentTime`, `playbackRate`). `shell.ts` and the e2e helpers (`audioTime`, `audioPaused`, `audioSource`, `audioRate`) read element properties only, so nothing depends on the native controls UI. The element is created in the markup, so no `new Audio()` change was needed.
+
+e2e: same coverage. The "generate and play" test now also asserts that `#audio` has no `controls` attribute, that no `audio[controls]` exists, and that exactly one button named Play or Pause exists and its id is `primary`.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 233 passed. `npm run build:e2e` OK. `npm run test:e2e` 32 passed (Chromium and Firefox), one run.
+
+Not checked visually: no screenshot. The control bar without the audio row (spacing under `#primary` and `#listen-start`) is unverified. Real iOS and Safari behaviour is unverified.
+
+iOS lock-screen risk: the media session is set up in `src/engine/media-session.ts` and does not need `controls`. I believe the lock screen and Control Center still show it, but I did not test this. Check on a phone that (1) the lock screen shows the title with play and pause, (2) the lock screen Play resumes and the button state follows, (3) audio plays with a `hidden` element, and (4) playback continues after the screen locks. If audio fails with `hidden`, a visually-hidden element is the fallback.
