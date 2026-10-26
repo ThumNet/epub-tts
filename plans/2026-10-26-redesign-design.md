@@ -180,6 +180,8 @@ Keep that rule. The primary label is the fixed word "Resume". The sub-line under
 - Desktop (`min-width: 700px`): the same column, `max-width: 42rem`, centred. The sheets become centred dialogs of the same width, not full-width bottom sheets. No second column.
 - Reading text: serif stack, `line-height: 1.6`, `font-size: 1.125rem` in `rem`, so it follows the system text size. On iOS this needs `font: -apple-system-body` on `:root` to follow Dynamic Type. Check it in the phone pass.
 
+**Form controls.** Selects use `appearance: none` with a custom chevron and `padding-right` of at least 2.5rem. The arrow never touches the border. The native picker (the iOS wheel) still opens on tap.
+
 ### CSS organisation
 
 | | Keep inline `<style>` in `index.html` | `src/styles.css`, linked from `index.html` (**recommended**) | `import "./styles.css"` in `main.ts` |
