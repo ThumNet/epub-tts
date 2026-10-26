@@ -524,3 +524,20 @@ Not checked: the layout in a real browser or standalone PWA (no screenshot, `rea
 ### Attempt 2
 
 Bug: the reduced-motion block set `dialog[open] { animation: none; }`, but the later `dialog[open] { animation: slide-up }` has equal specificity and won. Fix: the slide animation now lives inside `@media (prefers-reduced-motion: no-preference)`, and the `animation: none` rule is gone. I chose this over moving the block to the end of the file because it does not depend on rule order, so a later edit cannot break it. The other rule in the reduced-motion block (`scroll-behavior: auto !important`) wins by `!important`, and no other rule overrides it. New e2e test: "sheets: the slide animation runs by default and is off with reduced motion" checks the computed `animation-name` (`slide-up`, then `none` with `reducedMotion: "reduce"`).
+
+## Step 7a result
+
+Files: `index.html`, `src/styles.css`, this plan. No TS, no engine, no test change. All ids are kept.
+
+User feedback: the status line sat above the primary button with a divider, and the scrolling text looked cut off.
+
+Changes:
+- `#stats` moves into `.controls`, after `#listen-start` and before the hidden `<audio>`. It is now the last visible row of the bottom bar, above the safe-area padding. `#saved` and the resume sub-line stay in place.
+- `#stats` style: 0.8rem, `--muted` (token unchanged, so the AA ratios in the Step 6 table still hold), left aligned. It clamps to 2 lines with `-webkit-line-clamp` and ellipsis. It reserves `min-height: 2.6em` (two lines at line-height 1.3), so a long status does not change the bar height.
+- The `border-top` on `.controls` is removed.
+- `#text` gets a 1.5rem fade at the top and bottom edge. The fade is a `mask-image` linear-gradient (alpha only, so it works in both schemes), with `-webkit-mask-image` and `mask-image` for Firefox. `#text` padding is now 1.5rem top and bottom, equal to the fade height. The first and last lines can scroll fully clear of the fade.
+- The mask sits on the scroll container, not on the spans. Click and tap on sentences and `scrollIntoView({ block: "center" })` are not affected.
+
+Results: `npm run typecheck` OK (0 cycles). `npm run build` OK, no mock strings in `dist`. `npm test` 233 passed. `npm run build:e2e` OK. `npm run test:e2e` 34 passed (Chromium and Firefox), one run.
+
+Not checked: how the fade, the two-line status and the bar height look in a real browser or on a phone. I made no screenshots. A real Safari and the standalone PWA are not checked either.

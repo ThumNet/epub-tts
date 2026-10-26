@@ -203,8 +203,7 @@ body[data-book="none"] #open-book {
 }
 
 .controls {
-  padding: var(--space-3) 0 max(var(--space-3), env(safe-area-inset-bottom));
-  border-top: 1px solid var(--border);
+  padding: var(--space-2) 0 max(var(--space-3), env(safe-area-inset-bottom));
 }
 
 #saved {
@@ -422,7 +421,9 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-3) 0;
+  padding: 1.5rem 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.5rem, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 1.5rem, #000 calc(100% - 1.5rem), transparent);
   font-family: var(--font-read);
   font-size: 1.125rem;
   line-height: 1.6;
@@ -502,8 +503,16 @@ pre {
 }
 
 #stats {
-  padding-bottom: var(--space-1);
-  font-size: 0.875rem;
+  margin-top: var(--space-2);
+  min-height: 2.6em;
+  font-size: 0.8rem;
+  line-height: 1.3;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
