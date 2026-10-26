@@ -274,3 +274,44 @@ Oddities noticed, not fixed:
 - `recoverPlayback` sets `recoveryCausedPause` inline instead of calling `ignoreSourceChangePause()`. Same effect.
 - `playingChapterIndex` doc and `selectChapter` log text say "while generating" even when called while idle and navigating.
 - `view()` reads the select value through `hooks.getSelectedChapter()` on every call (DOM read as state source, known).
+
+## Step 8 result
+
+Step 8 moves the UI shell into `src/ui/shell.ts` (`createShell()`). `createShell` collects the DOM elements and builds the hooks. It returns phase methods that hold the old DOM code. The engine modules do not exist yet at that point, so `shell.bind({...})` gives the shell its engine references. `main.ts` is now the boot list. No logic line changed.
+
+Results: `npm run typecheck` OK (`boundaries OK: 23 files, 68 imports, 0 cycles, 11 engine files checked`), `npm test` 163 passed (12 files), `npm run build` and `build:e2e` OK, `dist` has no `mock`, `segmentSeconds`, `e2e-worker` or `EPUB_TTS_MOCK_WORKER` string. `npm run test:e2e` run twice, 14 of 14 both times.
+
+| File in `dist/assets` | Size (vite, kB) | Step 7 |
+|---|---|---|
+| `index-T3oUztOn.js` | 412.36 | 411.25 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+The e2e build has `index--w2pLEpc.js` (412.54 kB) and the same `worker.mock` chunk (0.87 kB).
+
+Line counts: `src/main.ts` 97 (was 464), `src/ui/shell.ts` 437. Main is over the 80-line target because the factory calls with their dependency objects take about 50 lines.
+
+Boot order, before (old `main.ts`) and after (`main.ts` calling the shell). The order is the same:
+
+1. refs, `VERSION_LABEL`, hooks object (no side effect except the version text)
+2. `createDiagnostics`
+3. `injectIsolationWorker`, two log lines (`shell.logEnvironment()`)
+4. `diagnostics.reportStaleMarker()`
+5. `createBook`, `createMediaSession`, `createSettings`, `createVoicesStore`, `createLibrary`, `createWorkerClient`, `createPlayback` (`shell.bind` is new and has no side effect)
+6. `setInterval` persist (`shell.startPersistTimer()`)
+7. `diagnostics.startHeartbeat()`
+8. `refreshSavedUi()` (`shell.refreshSavedUi()`)
+9. page lifecycle listeners (`shell.registerLifecycleListeners()`)
+10. `diagnostics.logAudioEvents()`, `diagnostics.setupAudioSession()`
+11. `playback.registerPlayPauseListeners()`
+12. `mediaSession.setup()`
+13. `playback.registerTimeUpdateListener()`
+14. text `click` (`shell.registerTextClickListener()`)
+15. `playback.registerEndedListener()`
+16. speed, `ratechange`, voice listeners (`shell.registerSettingsListeners()`)
+17. `initSettings()` (`shell.initSettings()`)
+18. file, audio `play`/`pause`, forget, chapter, generate, cancel, resume, copy-log listeners (`shell.registerControlListeners()`)
+19. `library.restore()`, `log("ready")`
+
+Differences beyond scoping: the old `selectedVoiceId()` is now `settings.voiceId` in `main.ts` (factory dependencies) and `engine().settings.voiceId` in the shell. The shell reads engine modules through `engine()`, which throws if `bind` has not run. The old code would have hit a temporal-dead-zone error in the same case.
