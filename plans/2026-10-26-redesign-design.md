@@ -19,7 +19,9 @@ All decisions are settled. No open questions remain.
 - Light and dark follow the system. No manual toggle.
 - Own Play/Pause button replaces the native audio controls.
 - One primary action. Resume is the main action when a saved position exists.
-- Stop shows while generating.
+- ~~Stop shows while generating.~~ Reversed 2026-10-26: there is no separate Stop button (see "Answered", item 16).
+- The primary button shows a small icon beside its text (2026-10-26).
+- One button during generation (2026-10-26). Before the first audio plays it reads "Stop" and cancels generation. Once audio plays it reads "Pause". There is no "starting" disabled state.
 - Welcome state on first run.
 - The text fills the free screen height.
 - Element ids may change. The e2e tests keep the same behaviours.
@@ -48,7 +50,7 @@ These are settled. Do not reopen them.
 5. **Main screen** always shows:
    - the book title and the chapter name;
    - the reading text, which fills the free height and scrolls inside;
-   - one primary button, full bar width: Listen, Resume, Pause or Play. (Chapter Previous and Next are not here. They moved into the Book sheet, item 15.) A small Stop button shows while generation runs. Stop is today's Cancel;
+   - one primary button, full bar width: Listen, Resume, Stop, Pause or Play, with a small icon beside the text (item 16). (Chapter Previous and Next are not here. They moved into the Book sheet, item 15.) ~~A small Stop button shows while generation runs.~~ Reversed 2026-10-26 (item 16): the primary button itself reads "Stop" before the first audio plays. Stop is today's Cancel;
    - the status line (`#stats`), small.
 6. **Resume.** When the open book has a saved position, Resume ("Resume at chapter N, 12 min ago") is the main action. "Listen from chapter start" becomes secondary.
 7. **Audio.** An own Play/Pause replaces the native `<audio controls>` (`index.html:72`). The audio element stays, without controls. Media session lock screen controls stay. No progress bar. No new features.
@@ -63,6 +65,14 @@ These are settled. Do not reopen them.
 13. **Speed (answered).** All speed controls move into the Voice sheet, renamed "Voice and speed": Slower, speed label, Faster and Reset to 1x. The main screen shows no speed controls. The user chose this on 2026-10-26, after seeing the earlier answer "speed buttons always visible". This reverses that earlier answer.
 14. **Chapter picker (answered).** The native `<select>` in the Book sheet is accepted.
 15. **Chapter Previous and Next (answered).** They move from the main screen into the Book sheet. The user chose this on 2026-10-26, after seeing the prototype: "you would not change chapter that often". This reverses the earlier answer "chapter Previous and Next always visible". The buttons are text buttons ("Previous chapter", "Next chapter"), at least 44 px high, next to the native chapter select. The ids `#chapter-prev` and `#chapter-next` stay. The lock screen previous and next track actions still map to chapters through the media session. The header keeps the chapter name.
+16. **Icon and one button during generation (answered).** The user chose this on 2026-10-26, after seeing the prototype. This reverses the earlier "Stop shows while generating" (a separate Stop button) and the `starting` state (a disabled "Listen").
+    - The primary button shows a small icon beside its text.
+    - There is one button during generation. Before the first audio plays (generation runs, nothing loaded) it reads "Stop" and cancels generation. Once audio plays it reads "Pause" as usual.
+    - There is no separate Stop button and no disabled "Starting" state.
+    - Reason from the user: generation takes about 10 s for a minute of audio, so a Stop during playback is not needed.
+    - Icon set: inline SVG, no font and no download, `fill` or `stroke` set to `currentColor`. Play triangle for Listen and Play. Two bars for Pause. Filled square for Stop. Circular arrow for Resume.
+    - Accessible name: the button text stays the accessible name. Each SVG has `aria-hidden="true"` and `focusable="false"`.
+    - Style: amber stays for Listen, Resume, Play and Pause. Stop uses the same size with a transparent background and a 2 px outline in the text colour. It looks calm and not like an error.
 
 ## 1. Sheet mechanism
 
@@ -97,36 +107,43 @@ Rules for the sheets:
 |---|---|
 | `book` | `bookStore.opened` (`src/ui/shell.ts:230`) |
 | `generating`, `navigating` | `playback.view()` (`src/engine/playback.ts:1084-1093`) |
-| `paused` | `audio.paused` (`src/ui/shell.ts:233`). Rows 2 and 3 use `wantPlaying` instead (G1). |
+| `paused` | `audio.paused` (`src/ui/shell.ts:233`). Rows 3 and 4 use `wantPlaying` instead (G1). |
 | `saved` | `loadPosition()` (`src/ui/shell.ts:232`) |
 | `locked` | `generating || voices.busy || library.busy` (`src/ui/view.ts:59`) |
 | `loaded` (**new snapshot field**, no engine change) | `playback.hasLoaded()` (`src/engine/playback.ts:107`, `:1077`). The shell already calls it (`src/ui/shell.ts:295`). Add it to `Snapshot` in `snapshot()`. |
 
 ### States
 
-`deriveView` returns `primary: { state, label, disabled }` and `stopHidden`, `secondaryHidden`. Evaluate the rows top to bottom. The first match wins.
+`deriveView` returns `primary: { state, label, icon, disabled }` and `secondaryHidden`. (Updated 2026-10-26: `stopHidden` is removed, because there is no separate Stop button.) Evaluate the rows top to bottom. The first match wins.
 
-| # | State | Condition | Label | Click calls |
+Updated 2026-10-26. The rows are: open, listen, resume, stop, pause, play. The old `starting` row (disabled "Listen") is removed. The `stop` row replaces it, in the same position.
+
+| # | State | Condition | Label and icon | Click calls |
 |---|---|---|---|---|
-| 1 | `open` | `!book` | "Open an EPUB" (welcome) | Opens the file picker (`<label for="file">`, section 4). Disabled when `library.busy`. |
-| 2 | `pause` | `loaded && !paused` | "Pause" | `playback.pauseFromMediaSession()` (`playback.ts:379`) |
-| 3 | `play` | `loaded && paused` | "Play" | `playback.playFromMediaSession()` (`playback.ts:310`) |
-| 4 | `starting` | `generating && !loaded` | "Listen", disabled | Nothing. The status line shows progress. |
-| 5 | `resume` | `saved && saved.bookId === book.id` | "Resume" + sub-line (section 2, "Resume text") | The existing resume handler (`src/ui/shell.ts:431-437`). Disabled when `locked` (today's `resumeDisabled`, `view.ts:63`). |
-| 6 | `listen` | otherwise | "Listen" | `playback.generateChapter(ui.selectedChapter)` (today's generate handler, `shell.ts:424-427`). Disabled when `generateDisabled` (`view.ts:61`). |
+| 1 | `open` | `!book` | "Open an EPUB" (welcome), no icon | Opens the file picker (`<label for="file">`, section 4). Disabled when `library.busy`. |
+| 2 | `stop` | `generating && !loaded` | "Stop", square icon | `playback.cancelGeneration()` (`playback.ts:903`). Never disabled. |
+| 3 | `pause` | `loaded && wantPlaying` | "Pause", two bars | `playback.pauseFromMediaSession()` (`playback.ts:379`) |
+| 4 | `play` | `loaded && !wantPlaying` | "Play", triangle | `playback.playFromMediaSession()` (`playback.ts:310`) |
+| 5 | `resume` | `saved && saved.bookId === book.id` | "Resume", circular arrow, + sub-line (section 2, "Resume text") | The existing resume handler (`src/ui/shell.ts:431-437`). Disabled when `locked` (today's `resumeDisabled`, `view.ts:63`). |
+| 6 | `listen` | otherwise | "Listen", triangle | `playback.generateChapter(ui.selectedChapter)` (today's generate handler, `shell.ts:424-427`). Disabled when `generateDisabled` (`view.ts:61`). |
+
+Order note: `stop` comes before `pause` and `play`. While the first segment generates, `loaded` is false, so no playing row can match. The earlier text put `pause` and `play` first (rows 2 and 3) and `starting` at row 4. `stop` can sit above them only because `generating && !loaded` excludes them.
+
+Engine check (reading only, `src/engine/playback.ts`). `view()` exposes `generating` (`:1087`). The snapshot gets `loaded` from `hasLoaded()` (`:1077`, `loaded !== undefined`). The engine also has an internal flag `awaitingFirstSegment` (`:133`, set at `:831`, cleared at `:742` and `:883`). The flag reaches `navigationBase` (`:1029`) but not `PlaybackView`. So the shell does not need a new engine field. `generating && !loaded` decides `stop`. This is the same condition the earlier design used for `starting`.
+Edge case, not verified in the browser: if a chapter is already loaded and a new generation starts (for example a chapter picked while generating), `loaded` is true and the button shows Pause or Play. Step 3 must observe this and not assume it.
 
 Secondary "Listen from chapter start": shown only in state `resume`. It calls the generate handler. Disabled when `generateDisabled`.
 
-Stop: shown when `generating`. It calls `playback.cancelGeneration()` (`playback.ts:903`). This is today's `cancelDisabled` inverted to `stopHidden` (`view.ts:62`).
+There is no separate Stop button (reversed 2026-10-26). The old `stopHidden` field and `cancelDisabled` inverted (`view.ts:62`) go. Cancel is reachable only through the `stop` state of `#primary`. After the first audio plays, generation continues in the background and the user cannot cancel it. The user accepted this, because generation is fast (item 16).
 
-Play and Pause are not disabled by `locked`. The native controls are never disabled today, so the own buttons must not be either.
+Stop, Play and Pause are not disabled by `locked`. The native controls are never disabled today, so the own buttons must not be either.
 
 ### Transitions (what the user sees)
 
 1. Welcome (`open`) → pick file → `listen`, or `resume` when the book has a saved position.
-2. `listen` or `resume` → click → `starting` (Stop shows) → first segment plays → `pause`.
+2. `listen` or `resume` → click → `stop` (the same button reads "Stop") → first segment plays → `pause`. (Was `starting` with a separate Stop button, reversed 2026-10-26.)
 3. `pause` ↔ `play` on click, on lock screen actions, and on headphone controls. The `play` and `pause` audio events already call `notifyChange` (`shell.ts:405-406`).
-4. Stop → `generating` becomes false. If a chapter stays loaded, the state stays `pause` or `play`. If not, it returns to `listen` or `resume`. I did not verify whether Cancel unloads the chapter. The prototype and step 3 must observe it, not assume it.
+4. Click on `stop` (Cancel) → `generating` becomes false. Nothing was loaded, so the state returns to `listen` or `resume`. (Updated 2026-10-26: Stop now shows only when nothing is loaded.) Earlier text: if a chapter stays loaded, the state stays `pause` or `play`. If not, it returns to `listen` or `resume`. I did not verify whether Cancel unloads the chapter. The prototype and step 3 must observe it, not assume it.
 5. Forget → `open`.
 
 ### Resume text and the saved-text trigger
@@ -137,15 +154,15 @@ Keep that rule. The primary label is the fixed word "Resume". The sub-line under
 ### Engine API gaps (for the user, not invented here)
 
 - **G1, segment gaps flip the button.** At each segment end the audio element pauses (`ended`), and the next `src` loads. `paused` is true for that moment. The button flips to "Play" and back. With 60 s segments this is once a minute. During buffering at a chapter edge it can last seconds. The engine knows the intent (`wantPlaying`, `playback.ts:311`, `:335`, `:341`, `:380`) but `PlaybackView` does not expose it (`playback.ts:88-94`).
-  Decision: the user accepted this. Add one read-only field `wantPlaying` to `PlaybackView`, and use `wantPlaying` instead of `!paused` in rows 2 and 3. This is the one allowed engine change. It is one line in `view()` plus the type. Step 3 does it, with a unit test. Note: `playFromMediaSession` sets `wantPlaying` while buffering without a notify (`playback.ts:311-316`). The button then updates at the next event.
+  Decision: the user accepted this. Add one read-only field `wantPlaying` to `PlaybackView`, and use `wantPlaying` instead of `!paused` in rows 3 and 4 (numbering updated 2026-10-26). This is the one allowed engine change. It is one line in `view()` plus the type. Step 3 does it, with a unit test. Note: `playFromMediaSession` sets `wantPlaying` while buffering without a notify (`playback.ts:311-316`). The button then updates at the next event.
 - **G2, end of book.** After "end of book" the chapter may stay loaded and paused, so the state is `play`. I did not verify what `playFromMediaSession` does then (replay of the last segment, or nothing). Observe it in step 3. Do not change the engine for it.
-- **G3, Play while nothing is loaded.** Row 4 prevents it. `audio.play()` without `src` rejects. That is logged, not a `console.error`, but avoid it.
+- **G3, Play while nothing is loaded.** Row 2 (`stop`) prevents it. `audio.play()` without `src` rejects. That is logged, not a `console.error`, but avoid it.
 
 ### What e2e can observe
 
-- `#primary` gets `data-state` = one of the six states. Tests assert `data-state`, not the label text. Labels may change after the screenshot review.
-- `#primary` `toBeDisabled()` for `starting` and for `locked`.
-- `#stop` visible while generating, hidden after Stop.
+- `#primary` gets `data-state` = one of the six states: `open`, `listen`, `resume`, `stop`, `pause`, `play`. Tests assert `data-state`, not the label text. Labels and icons may change after the screenshot review.
+- `#primary` `toBeDisabled()` for `locked` (`listen`, `resume`). `stop` is never disabled. (Updated 2026-10-26: `starting` is removed.)
+- Stop: click `#primary` while `data-state` is `stop`. Then generation ends and `data-state` returns to `listen` or `resume`. There is no `#stop` element (reversed 2026-10-26).
 - Pause and Play: click `#primary` in `pause`, then `audioPaused(page)` is true and `data-state` is `play`. This replaces the old direct `element.pause()` in the open-and-remember test (`tests/e2e/app.spec.ts:52-54`).
 
 ## 3. Layout and CSS
@@ -157,7 +174,7 @@ Keep that rule. The primary label is the fixed word "Resume". The sub-line under
   1. Header: book title (one line, ellipsis), chapter name, and two icon buttons (Book, Voice and speed). Diagnostics opens from the Book sheet footer and from the version line.
   2. `#text`: `flex: 1; min-height: 0; overflow-y: auto`. This replaces `max-height: 30vh` (`index.html:23`).
   3. Status line `#stats`: one line, small, muted.
-  4. Control bar: the primary button only. It fills the bar width and is the largest control. Stop shows beside the resume text while generating. No chapter buttons and no speed controls (both live in sheets).
+  4. Control bar: the primary button only, with a 20 px icon before the label. It fills the bar width and is the largest control. The button itself reads "Stop" while generation runs before the first audio (reversed 2026-10-26: no separate Stop button). No chapter buttons and no speed controls (both live in sheets).
 - Safe areas: `padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)` with a minimum, through `max()`. `viewport-fit=cover` is already set (`index.html:5`). The control bar gets the bottom inset, so it sits above the home indicator.
 - Touch targets: every button at least 44x44 px (today `index.html:21`, `:31-32`). The primary button is at least 56 px high.
 - Desktop (`min-width: 700px`): the same column, `max-width: 42rem`, centred. The sheets become centred dialogs of the same width, not full-width bottom sheets. No second column.
@@ -212,7 +229,7 @@ The values are a start for the prototype. The screenshot review sets the final v
 | `#voice` (:57) | Voice and speed sheet | kept |
 | `#voice-status`, `#voice-download`, `#voice-remove` (:59-61) | Voice and speed sheet | kept |
 | `#generate` (:64) | Replaced by `#primary` (states `listen`) and `#listen-start` (secondary in `resume`) | `#primary`, `#listen-start` |
-| `#cancel` (:65) | Main control area, under the primary button | `#stop` |
+| `#cancel` (:65) | Merged into `#primary` (state `stop`). Updated 2026-10-26: the earlier `#stop` button is removed. | removed |
 | `#resume` (:66) | Merged into `#primary` (state `resume`) | removed |
 | `#stats` (:68) | Main, above the control bar | kept |
 | `#audio` (:72) | Stays in the DOM, no `controls`, `hidden` | kept |
@@ -230,7 +247,7 @@ Why keep the native chapter `<select>`: `drawChapters` (`shell.ts:102-109`), the
 
 - `drawTexts` (`shell.ts:95-99`): unchanged.
 - `drawChapters` (`shell.ts:102-109`): adds `#chapter-name`. It reads the same `ui` fields, so it is drawn in the same hooks.
-- `drawControls` (`shell.ts:123-136`): `generateButton`, `cancelButton`, `resumeButton` lines go. New: `#primary` (`data-state`, text, `disabled`), `#listen-start` (`hidden`, `disabled`), `#stop` (`hidden`), `#title`, and the welcome versus reader class on `body` (`data-book="none"`). `#saved` `hidden` (shown only in `resume`).
+- `drawControls` (`shell.ts:123-136`): `generateButton`, `cancelButton`, `resumeButton` lines go. New: `#primary` (`data-state` with the values `listen`, `resume`, `stop`, `pause`, `play`, plus label, icon and `disabled`), `#listen-start` (`hidden`, `disabled`), `#title`, and the welcome versus reader class on `body` (`data-book="none"`). `#saved` `hidden` (shown only in `resume`).
 - `drawSettings`: unchanged.
 - `renderSaved` (`shell.ts:112-114`): unchanged trigger, new wording.
 - `ControlsView`: remove `generateDisabled`, `cancelDisabled`, `resumeDisabled` only after the click handlers use `primary`. Keep them while steps 3 and 5 are in progress.
@@ -251,7 +268,7 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 | 0 | Prototype: static HTML files in `prototype/` (not in the Vite build), with fake text and fixed states. The main screen has no speed controls. The Voice and speed sheet holds them. A screenshot script writes 2 sizes x 2 schemes x 9 views. The user approves. | The prototype promises something the engine cannot do (for example G1). | Each prototype state maps to one row in section 2. No state without a row. |
 | 1 | Tokens and `src/styles.css`, light and dark, two `theme-color` metas, with the current markup. No id change. | A broken style hides a control (`hidden` attribute overridden by `display`). | e2e unchanged. Add `[hidden] { display: none !important; }`. `dist` asset count becomes five. |
 | 2 | Main screen layout and the welcome state. Move elements per section 4, except the three sheets (they stay as plain sections at the end of the page for now). `#title`, `#chapter-name`. `#chapter-prev` and `#chapter-next` move to the Book section. | Tests that click elements now off screen or covered. | e2e edits limited to locators that moved. Each edit is listed in the PR. |
-| 3 | Primary state machine in `deriveView`, `loaded` in the snapshot, `#primary`, `#listen-start`, `#stop`. Old `#generate`, `#cancel`, `#resume` are removed. Also adds `wantPlaying` to `PlaybackView` (the one allowed engine change) with a unit test, and rows 2 and 3 use it. | A wrong row order (for example `resume` shown while playing). | Unit table: one case per row and per transition. e2e: `generateChapter` helper uses `#primary`. |
+| 3 | Primary state machine in `deriveView`, `loaded` in the snapshot, `#primary` (with icons), `#listen-start`. No `#stop`. Old `#generate`, `#cancel`, `#resume` are removed. Also adds `wantPlaying` to `PlaybackView` (the one allowed engine change) with a unit test, and rows 2 and 3 use it. | A wrong row order (for example `resume` shown while playing). | Unit table: one case per row and per transition. e2e: `generateChapter` helper uses `#primary`. |
 | 4 | Sheets: Book, Voice and speed, Diagnostics as `<dialog>`. The speed controls move into the Voice and speed sheet and leave the main screen (ids kept). Openers, Close, Escape, backdrop tap, focus return. | A closed dialog hides elements that tests click (`#chapter`, `#chapter-prev`, `#chapter-next`, `#forget-book`, `#copy-log`, `#speed-down`, `#speed-up`, `#speed-reset`). | e2e helpers `openSheet(page, "book")` and `closeSheet`. Assertions on `#log` text work on a closed dialog, because the text stays in the DOM. |
 | 5 | Remove `controls` from `#audio`, hide it. Wire Play and Pause through `#primary`. | Lock screen and headphone controls stop working. Audio does not play without controls on some browser. | e2e pause and play via `#primary`. Phone pass item (section 7). |
 | 6 | Polish: safe areas, focus rings, `prefers-reduced-motion`, scroll `block: "center"`, contrast check. Delete `prototype/`. | Layout breaks in standalone PWA mode. | Screenshot script against the real build at the same sizes. Compare with the approved prototype by eye. |
@@ -263,15 +280,16 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 - **Unit (vitest, Node, no DOM):** `tests/unit/view.test.ts` gets a table for `primary`:
   - each of the six rows with the minimal snapshot that matches it;
   - row order: `loaded` and a matching `saved` gives `pause` or `play`, not `resume`;
+  - `generating && !loaded` gives `stop`, even with a matching `saved`;
   - `resume` only when `saved.bookId === book.id`. Another book gives `listen`;
-  - disabled: `listen` and `resume` disabled when `locked`; `play` and `pause` never disabled; `starting` always disabled;
-  - `stopHidden` equals `!generating`; `secondaryHidden` is false only in `resume`;
+  - disabled: `listen` and `resume` disabled when `locked`; `stop`, `play` and `pause` never disabled;
+  - `secondaryHidden` is false only in `resume`;
   - new `savedText` wording with a fixed `now`;
   - `wantPlaying` with `paused` true gives `pause`. Add a unit test for the `wantPlaying` field in `view()` too.
 - **e2e:** rewrite `tests/e2e/app.spec.ts` and `fixtures.ts` per step. The seven behaviours stay one test each. New assertions:
   - startup: the welcome state (`#primary[data-state=open]`) and the version text inside the Diagnostics sheet;
   - open and remember: `data-state` is `resume` after reload. Pause through `#primary` before Forget;
-  - generate and play: `data-state` goes `starting`, then `pause`. One Pause and one Play click change `audio.paused`;
+  - generate and play: `data-state` goes `stop`, then `pause`. A second test clicks `#primary` in `stop` and expects `listen` or `resume`. One Pause and one Play click change `audio.paused`;
   - diagnostics: open the sheet, copy, Escape closes it, and focus returns to the opener.
   The quiet-page rule (`fixtures.ts:6-16`) stays: no `console.error` and no page error.
   - Chapter navigation: the e2e tests that click `#chapter-prev`, `#chapter-next` or use `#chapter` must open the Book sheet first (`openSheet(page, "book")`). The ids stay. The lock screen previous and next track actions are not affected. They still map to chapters through the media session.
@@ -280,7 +298,7 @@ Each step is one commit. Each step passes `npm run typecheck`, `npm run build`, 
 
 ## 7. iOS risks for the phone test pass
 
-1. **Gesture and audio.** `#primary` in `listen` starts generation. The first `audio.play()` runs later, after the worker produces a segment, outside the tap. This is the same path as today's Generate button, so it is no new risk. Play in state `play` calls `audio.play()` inside the tap, which is safer than today. Check both on the phone.
+1. **Gesture and audio.** `#primary` in `listen` starts generation. In `stop` it cancels. The icons are inline SVG with `aria-hidden`, so they add no download. Check that they render at the same size on iOS. The first `audio.play()` runs later, after the worker produces a segment, outside the tap. This is the same path as today's Generate button, so it is no new risk. Play in state `play` calls `audio.play()` inside the tap, which is safer than today. Check both on the phone.
 2. **No native controls.** Confirm that the lock screen and Control Center still show the media session after `controls` is removed (step 5).
 3. **`100dvh`.** Safari changes the toolbar height while scrolling. Because the page does not scroll, `dvh` should stay stable. Check in Safari and in the standalone PWA.
 4. **`<dialog>`.** Needs iOS 15.4 or later. Check Escape-free close (the backdrop tap and Close), focus return, and that the background does not scroll.
