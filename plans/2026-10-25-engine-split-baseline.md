@@ -234,3 +234,43 @@ Results: `npm run typecheck` OK (`boundaries OK: 21 files, 48 imports, 0 cycles,
 Same asset list, no new chunk. The e2e build has `index-BzMGaTTM.js` (410.26 kB).
 
 Line counts: `src/main.ts` 1431 (was 1474), `src/engine/media-session.ts` 91.
+
+## Step 7 result
+
+Step 7 moves the playback core into `src/engine/playback.ts` (`createPlayback(deps)`), as one block. No logic line changed. Scoping and dependency edits only (see the report).
+
+Results: `npm run typecheck` OK (`boundaries OK: 22 files, 59 imports, 0 cycles, 11 engine files checked`), `npm test` 163 passed (12 files, new `playback.test.ts`, 5 tests), `npm run build` and `build:e2e` OK, `dist` has no `mock` string. `npm run test:e2e` run twice, 14 of 14 both times.
+
+| File in `dist/assets` | Size (vite, kB) | Step 6 |
+|---|---|---|
+| `index-rz1kmTrW.js` | 411.25 | 410.08 |
+| `ort.wasm.min-4XBKGcRb.js` | 141.89 | 141.89 |
+| `piper-o91UDS6e-DchrM4kQ.js` | 88.80 | 88.80 |
+| `worker-Bf42NmSi.js` | 16.11 | 16.11 |
+
+Same asset list, no new chunk. The e2e build has `index-D3HHscmy.js` (411.43 kB).
+
+Line counts: `src/main.ts` 464 (was 1431), `src/engine/playback.ts` 1098.
+
+Module-load registration order (same before and after):
+
+1. injectIsolationWorker, log lines, `diagnostics.reportStaleMarker()`
+2. workerClient created (then `createPlayback`, which has no side effect)
+3. `setInterval` persist (calls `playback.persistPosition`), `diagnostics.startHeartbeat()`, `refreshSavedUi()`
+4. page lifecycle listeners (`visibilitychange`, `pagehide`, `pageshow`, `freeze`, `resume`)
+5. `diagnostics.logAudioEvents()`, `diagnostics.setupAudioSession()`
+6. audio `play` (wantPlaying), audio `pause` (recovery) -> now `playback.registerPlayPauseListeners()`
+7. `mediaSession.setup()`
+8. audio `timeupdate` -> now `playback.registerTimeUpdateListener()`
+9. text `click` (stays in main, calls `playback.clickSentence`)
+10. audio `ended` -> now `playback.registerEndedListener()`
+11. speed listeners, audio `ratechange`
+12. `initSettings()`, then UI wiring (audio `play`/`pause` -> notifyChange), `library.restore()`, `log("ready")`
+
+`createPlayback` dependencies: `audio`, `hooks`, `workerClient`, `settings` (only `applyPlaybackRate`), `getVoiceId`, `isVoicesBusy`, `isLibraryBusy`, `bookStore`, `mediaSession`, `segmentTargetS`.
+
+Oddities noticed, not fixed:
+
+- `recoverPlayback` sets `recoveryCausedPause` inline instead of calling `ignoreSourceChangePause()`. Same effect.
+- `playingChapterIndex` doc and `selectChapter` log text say "while generating" even when called while idle and navigating.
+- `view()` reads the select value through `hooks.getSelectedChapter()` on every call (DOM read as state source, known).
