@@ -275,3 +275,42 @@ e2e edits:
 - "jump": `fill("0.75")` became one `#speed-down` click.
 
 All tests start at 1.0x, so no `#speed-reset` press was needed.
+
+## Step 1 result
+
+Done. `deriveView(snapshot)` is pure. `updateControls`, `refreshSavedUi` and `showSpeed` build a snapshot, derive, and apply only their own subset.
+
+Files:
+
+- `src/ui/view.ts` (new): `Snapshot`, `ControlsView`, `deriveView`. No DOM, no `document`/`window`.
+- `src/ui/shell.ts`: added `snapshot()`. It reads `playback.view()`, `voices`, `library`, `bookStore.opened`, `settings`, `loadPosition()` (once), `audio.paused` and `Date.now()` at call time. Nothing is cached. The three functions keep their names and call sites. `updateControls` keeps the old order of assignments.
+- `tests/unit/view.test.ts` (new): 34 tests. Unit total 200 (was 166).
+
+Mapping of old line to `ControlsView` field (old `locked = generating || voices.busy || library.busy`):
+
+| Old write | Field |
+|---|---|
+| `generateButton.disabled = locked \|\| !bookStore.opened` | `generateDisabled = locked \|\| !book` |
+| `cancelButton.disabled = !view.generating` | `cancelDisabled` |
+| `resumeButton.disabled = locked \|\| !saved \|\| opened?.id !== saved.bookId` | `resumeDisabled` |
+| `voiceSelect.disabled = locked` | `voiceSelectDisabled` |
+| `forgetButton.hidden = !library.remembered` | `forgetHidden` |
+| `forgetButton.disabled = locked \|\| library.busy \|\| navigating \|\| !audio.paused` | `forgetDisabled` (uses `paused`) |
+| `fileInput.disabled = library.busy` | `fileInputDisabled` |
+| prev: `voices.busy \|\| library.busy \|\| navigating \|\| !hasPrev` | `prevDisabled` |
+| next: same with `!hasNext` | `nextDisabled` |
+| `voiceDownloadButton.disabled = locked \|\| stored !== false` | `voiceDownloadDisabled` |
+| `voiceRemoveButton.disabled = locked \|\| stored !== true` | `voiceRemoveDisabled` |
+| `voiceStatus.textContent` (busy: message; error; unknown; stored; else size, fallback 61) | `voiceStatusText` |
+| `savedElement.textContent` in `refreshSavedUi` | `savedText` |
+| `speedLabel.textContent` in `showSpeed` | `speedLabel` |
+| `speed <= SPEED_MIN`, `speed >= SPEED_MAX` | `speedDownDisabled`, `speedUpDisabled` |
+
+Differences:
+
+- `refreshSavedUi` and `showSpeed` now call `playback.view()` and the other reads through `snapshot()`, although they apply one field. These reads have no side effects. `refreshSavedUi` also still calls `hooks.notifyChange()` after writing the text.
+- `voices.error` is a `string` in the engine, so the snapshot type is `string`, and the check stays a truthiness test.
+- `selectedVoiceId()` stays in the shell for the resume log line.
+- Boundary script: not changed. It only checks `src/engine`. A DOM-free rule for `ui/view.ts` needs a new function and a new summary line. Left for a decision. `view.ts` is DOM-free today and its test runs in Node.
+
+Checks: `typecheck`, `build`, `build:e2e` pass. e2e 14 of 14 twice, no e2e edits. `dist` has no "mock" and the same four assets.

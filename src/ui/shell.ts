@@ -1,9 +1,10 @@
 import type { Sentence } from "../epub";
 import { log, logText } from "../log";
 import { loadPosition } from "../store";
-import { DEFAULT_VOICE_ID, VOICES, findVoice } from "../voices";
-import { SAVE_INTERVAL_MS, SPEED_MAX, SPEED_MIN } from "../engine/config";
-import { describePosition, stepSpeed } from "../engine/pure";
+import { DEFAULT_VOICE_ID, VOICES } from "../voices";
+import { SAVE_INTERVAL_MS } from "../engine/config";
+import { stepSpeed } from "../engine/pure";
+import { deriveView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
 import type { Library } from "../engine/library";
@@ -147,19 +148,26 @@ export function createShell(): Shell {
     );
   }
 
+  /** Reads the live engine and browser values at call time. Nothing is cached. */
+  function snapshot(): Snapshot {
+    const { playback, voices, library, bookStore, settings } = engine();
+    const opened = bookStore.opened;
+    return {
+      playback: playback.view(),
+      voices: { busy: voices.busy, stored: voices.stored, message: voices.message, error: voices.error },
+      library: { busy: library.busy, remembered: library.remembered },
+      book: opened ? { id: opened.id, title: opened.title } : undefined,
+      settings: { voiceId: settings.voiceId, speed: settings.speed },
+      saved: loadPosition(),
+      paused: audio.paused,
+      now: Date.now(),
+    };
+  }
+
   // ---------------------------------------------------------------- saved position
 
   function refreshSavedUi(): void {
-    const { bookStore } = engine();
-    const saved = loadPosition();
-    if (!saved) {
-      savedElement.textContent = "No saved position.";
-    } else {
-      const matches = bookStore.opened?.id === saved.bookId;
-      savedElement.textContent = `${describePosition(saved, Date.now())} ${
-        matches ? "Press Resume saved position." : "Pick the same EPUB file to resume."
-      }`;
-    }
+    savedElement.textContent = deriveView(snapshot()).savedText;
     hooks.notifyChange();
   }
 
@@ -227,10 +235,10 @@ export function createShell(): Shell {
   }
 
   function showSpeed(): void {
-    const { settings } = engine();
-    speedLabel.textContent = `${settings.speed.toFixed(2)}x`;
-    speedDownButton.disabled = settings.speed <= SPEED_MIN;
-    speedUpButton.disabled = settings.speed >= SPEED_MAX;
+    const view = deriveView(snapshot());
+    speedLabel.textContent = view.speedLabel;
+    speedDownButton.disabled = view.speedDownDisabled;
+    speedUpButton.disabled = view.speedUpDisabled;
   }
 
   function setSpeed(value: number, reason: string): void {
@@ -243,33 +251,19 @@ export function createShell(): Shell {
   }
 
   function updateControls(): void {
-    const { playback, voices, library, bookStore } = engine();
-    const view = playback.view();
-    const locked = view.generating || voices.busy || library.busy;
-    generateButton.disabled = locked || !bookStore.opened;
-    cancelButton.disabled = !view.generating;
-    const saved = loadPosition();
-    resumeButton.disabled = locked || !saved || bookStore.opened?.id !== saved.bookId;
-    voiceSelect.disabled = locked;
-    forgetButton.hidden = !library.remembered;
-    forgetButton.disabled = locked || library.busy || view.navigating || !audio.paused;
-    fileInput.disabled = library.busy;
-    prevChapterButton.disabled = voices.busy || library.busy || view.navigating || !view.hasPrev;
-    nextChapterButton.disabled = voices.busy || library.busy || view.navigating || !view.hasNext;
-    voiceDownloadButton.disabled = locked || voices.stored !== false;
-    voiceRemoveButton.disabled = locked || voices.stored !== true;
-    if (voices.busy) {
-      voiceStatus.textContent = voices.message;
-    } else if (voices.error) {
-      voiceStatus.textContent = voices.error;
-    } else if (voices.stored === undefined) {
-      voiceStatus.textContent = "Status unknown";
-    } else if (voices.stored) {
-      voiceStatus.textContent = "Downloaded";
-    } else {
-      const size = findVoice(selectedVoiceId())?.sizeMb ?? 61;
-      voiceStatus.textContent = `Not downloaded (about ${Math.round(size)} MB)`;
-    }
+    const view = deriveView(snapshot());
+    generateButton.disabled = view.generateDisabled;
+    cancelButton.disabled = view.cancelDisabled;
+    resumeButton.disabled = view.resumeDisabled;
+    voiceSelect.disabled = view.voiceSelectDisabled;
+    forgetButton.hidden = view.forgetHidden;
+    forgetButton.disabled = view.forgetDisabled;
+    fileInput.disabled = view.fileInputDisabled;
+    prevChapterButton.disabled = view.prevDisabled;
+    nextChapterButton.disabled = view.nextDisabled;
+    voiceDownloadButton.disabled = view.voiceDownloadDisabled;
+    voiceRemoveButton.disabled = view.voiceRemoveDisabled;
+    voiceStatus.textContent = view.voiceStatusText;
   }
 
   function registerSettingsListeners(): void {
