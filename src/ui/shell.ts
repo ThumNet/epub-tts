@@ -4,6 +4,7 @@ import { loadPosition } from "../store";
 import { DEFAULT_VOICE_ID, VOICES } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
+import { createUiState } from "./state";
 import { deriveView, type Snapshot } from "./view";
 import type { EngineHooks } from "../engine/hooks";
 import type { BookStore } from "../engine/book";
@@ -79,6 +80,13 @@ export function createShell(): Shell {
   const textElement = byId("text", HTMLDivElement);
   const audio = byId("audio", HTMLAudioElement);
 
+  const ui = createUiState();
+  function applyTexts(): void {
+    statsElement.textContent = ui.status;
+    bookInfo.textContent = ui.bookInfo;
+    copyStatus.textContent = ui.copyStatus;
+  }
+
   let boundEngine: ShellEngine | undefined;
   function engine(): ShellEngine {
     if (!boundEngine) throw new Error("Shell used before bind()");
@@ -89,7 +97,8 @@ export function createShell(): Shell {
   const hooks: EngineHooks = {
     notifyChange: () => updateControls(),
     setStatus: (text) => {
-      statsElement.textContent = text;
+      ui.status = text;
+      applyTexts();
     },
     showChapter: (index) => {
       chapterSelect.value = String(index);
@@ -108,10 +117,12 @@ export function createShell(): Shell {
     },
     getSelectedChapter: () => Number(chapterSelect.value),
     setBookInfo: (text) => {
-      bookInfo.textContent = text;
+      ui.bookInfo = text;
+      applyTexts();
     },
     appendBookInfo: (text) => {
-      bookInfo.textContent += text;
+      ui.bookInfo += text;
+      applyTexts();
     },
     fillChapters: (chapters) => {
       chapterSelect.replaceChildren(...chapters.map((c) => new Option(c.label, String(c.index))));
@@ -337,10 +348,12 @@ export function createShell(): Shell {
 
   let copyStatusTimer: number | undefined;
   function showCopyStatus(message: string): void {
-    copyStatus.textContent = message;
+    ui.copyStatus = message;
+    applyTexts();
     window.clearTimeout(copyStatusTimer);
     copyStatusTimer = window.setTimeout(() => {
-      copyStatus.textContent = "";
+      ui.copyStatus = "";
+      applyTexts();
     }, 2000);
   }
 

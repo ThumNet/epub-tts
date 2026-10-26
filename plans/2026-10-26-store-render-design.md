@@ -314,3 +314,28 @@ Differences:
 - Boundary script: not changed. It only checks `src/engine`. A DOM-free rule for `ui/view.ts` needs a new function and a new summary line. Left for a decision. `view.ts` is DOM-free today and its test runs in Node.
 
 Checks: `typecheck`, `build`, `build:e2e` pass. e2e 14 of 14 twice, no e2e edits. `dist` has no "mock" and the same four assets.
+
+## Step 2 result
+
+Done. The shell holds `ui: UiState` (`status`, `bookInfo`, `copyStatus`). `applyTexts()` writes the three elements from it. No behaviour change.
+
+Files:
+
+- `src/ui/state.ts` (new, DOM-free): `UiState` and `createUiState()`. Initial values equal `index.html`: status `"Idle."` (`#stats`), bookInfo `""` (`#book`), copyStatus `""` (`#copy-status`).
+- `src/ui/shell.ts`: `ui` and `applyTexts()` (lines 79-88). No diff guard.
+
+Write sites converted (`src/ui/shell.ts`, new line numbers):
+
+| Old write | New |
+|---|---|
+| `setStatus`: `statsElement.textContent = text` | line 100: `ui.status = text; applyTexts()` |
+| `setBookInfo`: `bookInfo.textContent = text` | line 120: `ui.bookInfo = text; applyTexts()` |
+| `appendBookInfo`: `bookInfo.textContent += text` | line 124: `ui.bookInfo += text; applyTexts()` |
+| `showCopyStatus`: `copyStatus.textContent = message` | line 351: `ui.copyStatus = message; applyTexts()` |
+| `showCopyStatus` timer: `copyStatus.textContent = ""` | line 355: `ui.copyStatus = ""; applyTexts()` |
+
+Other writers: none. A grep of `src` finds the three `textContent` writes only in `applyTexts` (lines 85-87). `src/engine/hooks.ts` only mentions them in comments. The `+=` is equal to the old one because `ui.bookInfo` always holds the last assigned string.
+
+No unit tests added: there is no pure logic beyond assignment.
+
+Checks: `typecheck`, `build`, `build:e2e` pass. Unit 203 passed (13 files). e2e 14 of 14 twice, no e2e edits. `dist` has no "mock" and the same four assets.
