@@ -11,7 +11,7 @@ vi.mock("../../src/e2e-worker", () => ({ createMockWorker: vi.fn() }));
 
 import { createPlayback } from "../../src/engine/playback";
 
-function setup(selected = 4) {
+function setup(selected = 4, segmentTargetS = 60) {
   const hooks = {
     notifyChange: vi.fn(),
     setStatus: vi.fn(),
@@ -44,20 +44,21 @@ function setup(selected = 4) {
     setPlaybackState: vi.fn(),
   };
   const audio = { pause: vi.fn(), load: vi.fn(), removeAttribute: vi.fn(), addEventListener: vi.fn() };
+  const voice = { id: "voice" };
   const playback = createPlayback({
     // The factory only calls the members faked above on an idle engine.
     audio: audio as unknown as HTMLAudioElement,
     hooks,
     workerClient,
     settings: { applyPlaybackRate: vi.fn() },
-    getVoiceId: () => "voice",
+    getVoiceId: () => voice.id,
     isVoicesBusy: () => false,
     isLibraryBusy: () => false,
     bookStore,
     mediaSession,
-    segmentTargetS: 60,
+    segmentTargetS,
   });
-  return { playback, hooks, workerClient, audio, bookStore };
+  return { playback, hooks, workerClient, audio, bookStore, voice };
 }
 
 const SENTENCES = [
@@ -245,5 +246,170 @@ describe("createPlayback on an idle engine", () => {
     const { playback, hooks } = setup();
     await playback.generateChapter(0);
     expect(hooks.notifyChange).not.toHaveBeenCalled();
+  });
+});
+
+const CLIP = { clip: { sampleRate: 22050, pcm: new Int16Array(2205) }, genMs: 1 };
+
+/** An engine with chapter 0 generated and loaded in a faked audio element. The caller must restore timers and globals. */
+async function loadedEngine(segmentTargetS = 60) {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", {});
+  const t = setup(4, segmentTargetS);
+  openBook(t.bookStore);
+  const play = vi.fn(() => Promise.resolve());
+  Object.assign(t.audio, { play, currentTime: 0, paused: false, readyState: 4, networkState: 1, ended: false });
+  vi.mocked(t.bookStore.chapterSentences).mockResolvedValue(SENTENCES);
+  vi.mocked(t.workerClient.ensure).mockResolvedValue(undefined);
+  vi.mocked(t.workerClient.clip).mockResolvedValue(CLIP);
+  await t.playback.generateChapter(0);
+  expect(t.playback.hasLoaded()).toBe(true);
+  return { ...t, play };
+}
+
+function restore(): void {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+}
+
+describe("clickSentence (Play from here) on generated audio", () => {
+  it("starts playback from paused for a sentence in the current segment", async () => {
+    try {
+      const { playback, audio, play } = await loadedEngine();
+      Object.assign(audio, { paused: true, currentTime: 0 });
+      play.mockClear();
+      playback.clickSentence(1);
+      expect(play).toHaveBeenCalledTimes(1);
+      expect((audio as unknown as { currentTime: number }).currentTime).toBeGreaterThan(0);
+      expect(playback.view().wantPlaying).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("starts playback from paused for a sentence in another generated segment", async () => {
+    try {
+      const { playback, audio, play } = await loadedEngine(0.05);
+      Object.assign(audio, { paused: true });
+      play.mockClear();
+      playback.clickSentence(1);
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(playback.view().wantPlaying).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("selecting a chapter while one is loaded", () => {
+  it("stops the old chapter and draws the new text at once, before any audio is ready", async () => {
+    try {
+      const { playback, hooks, workerClient, audio, bookStore } = await loadedEngine();
+      hooks.renderChapter.mockClear();
+      hooks.clearText.mockClear();
+      const next = [{ text: "Next.", paragraphEnd: true }];
+      vi.mocked(bookStore.chapterSentences).mockResolvedValue(next);
+      vi.mocked(workerClient.ensure).mockReturnValue(new Promise(() => undefined));
+      await playback.selectChapter(1);
+      expect(audio.pause).toHaveBeenCalled();
+      expect(hooks.clearText).toHaveBeenCalledTimes(1);
+      expect(hooks.renderChapter).toHaveBeenCalledTimes(1);
+      expect(hooks.renderChapter).toHaveBeenCalledWith(next);
+      expect(hooks.clearText.mock.invocationCallOrder[0]).toBeLessThan(hooks.renderChapter.mock.invocationCallOrder[0] ?? 0);
+      expect(playback.hasLoaded()).toBe(false);
+      expect(playback.view().generating).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+  it("draws the new text before a cancelled generation settles", async () => {
+    try {
+      const { playback, hooks, workerClient, bookStore } = await loadedEngine();
+      // A second generation sits in a slow sentence: the cancel message does not settle it.
+      vi.mocked(workerClient.clip).mockReturnValue(new Promise(() => undefined));
+      void playback.generateChapter(0, 0, SENTENCES);
+      expect(playback.view().generating).toBe(true);
+      hooks.renderChapter.mockClear();
+      hooks.clearText.mockClear();
+      const next = [{ text: "Next.", paragraphEnd: true }];
+      vi.mocked(bookStore.chapterSentences).mockResolvedValue(next);
+      void playback.selectChapter(1);
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+      expect(workerClient.cancel).toHaveBeenCalled();
+      expect(playback.view().generating).toBe(true);
+      expect(hooks.clearText).toHaveBeenCalledTimes(1);
+      expect(hooks.renderChapter).toHaveBeenCalledWith(next);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("applyVoiceChange", () => {
+  it("resuming after a paused voice change restarts with the new voice", async () => {
+    try {
+      const { playback, workerClient, voice } = await loadedEngine();
+      voice.id = "other";
+      vi.mocked(workerClient.ensure).mockClear();
+      vi.mocked(workerClient.clip).mockClear();
+      playback.playFromMediaSession();
+      expect(playback.view().generating).toBe(true);
+      expect(playback.view().wantPlaying).toBe(true);
+      await playback.activeGeneration();
+      expect(workerClient.ensure).toHaveBeenCalledWith("other");
+      expect(workerClient.clip).toHaveBeenCalledWith("One.", "other");
+    } finally {
+      restore();
+    }
+  });
+
+  it("restarts a playing chapter at the current sentence with the new voice", async () => {
+    try {
+      const { playback, workerClient, voice } = await loadedEngine();
+      playback.playFromMediaSession();
+      voice.id = "other";
+      vi.mocked(workerClient.ensure).mockClear();
+      vi.mocked(workerClient.clip).mockClear();
+      playback.applyVoiceChange();
+      expect(playback.view().generating).toBe(true);
+      await playback.activeGeneration();
+      expect(workerClient.ensure).toHaveBeenCalledWith("other");
+      expect(workerClient.clip).toHaveBeenCalledWith("One.", "other");
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing while paused, so the new voice applies to the next generation", async () => {
+    try {
+      const { playback, workerClient, voice } = await loadedEngine();
+      voice.id = "other";
+      vi.mocked(workerClient.ensure).mockClear();
+      playback.applyVoiceChange();
+      expect(playback.view().generating).toBe(false);
+      expect(workerClient.ensure).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing when the voice is the one that generated the chapter", async () => {
+    try {
+      const { playback, workerClient } = await loadedEngine();
+      playback.playFromMediaSession();
+      vi.mocked(workerClient.ensure).mockClear();
+      playback.applyVoiceChange();
+      expect(playback.view().generating).toBe(false);
+      expect(workerClient.ensure).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing when no chapter is loaded", () => {
+    const { playback, workerClient, voice } = setup();
+    voice.id = "other";
+    playback.applyVoiceChange();
+    expect(workerClient.ensure).not.toHaveBeenCalled();
   });
 });

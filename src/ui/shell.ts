@@ -62,8 +62,8 @@ export function createShell(): Shell {
   const nextChapterButton = byId("chapter-next", HTMLButtonElement);
   const voiceSelect = byId("voice", HTMLSelectElement);
   const voiceStatus = byId("voice-status", HTMLSpanElement);
-  const voiceDownloadButton = byId("voice-download", HTMLButtonElement);
-  const voiceRemoveButton = byId("voice-remove", HTMLButtonElement);
+  const voiceActionButton = byId("voice-action", HTMLButtonElement);
+  const activityElement = byId("activity", HTMLDivElement);
   const speedDownButton = byId("speed-down", HTMLButtonElement);
   const speedUpButton = byId("speed-up", HTMLButtonElement);
   const speedLabel = byId("speed-label", HTMLSpanElement);
@@ -97,6 +97,7 @@ export function createShell(): Shell {
 
   function drawTexts(): void {
     statsElement.textContent = statusText(ui.status);
+    activityElement.setAttribute("aria-valuetext", statusText(ui.status));
     bookInfo.textContent = ui.bookInfo;
     copyStatus.textContent = ui.copyStatus;
   }
@@ -137,9 +138,15 @@ export function createShell(): Shell {
     fileInput.disabled = view.fileInputDisabled;
     prevChapterButton.disabled = view.prevDisabled;
     nextChapterButton.disabled = view.nextDisabled;
-    voiceDownloadButton.disabled = view.voiceDownloadDisabled;
-    voiceRemoveButton.disabled = view.voiceRemoveDisabled;
+    voiceActionButton.dataset["action"] = view.voiceAction.kind;
+    voiceActionButton.disabled = view.voiceAction.disabled;
+    voiceActionButton.title = view.voiceAction.label;
+    voiceActionButton.setAttribute("aria-label", view.voiceAction.label);
     voiceStatus.textContent = view.voiceStatusText;
+    activityElement.dataset["busy"] = String(view.busy);
+    activityElement.setAttribute("aria-hidden", String(!view.busy));
+    // While the app works the bar shows it. The status text returns when the work ends, so errors stay readable.
+    statsElement.hidden = view.busy;
     titleElement.textContent = view.titleText;
     document.body.dataset["book"] = view.welcomeVisible ? "none" : "open";
     // Closing is a reaction to state. Render never opens a sheet. A Book sheet reopened during a pending Forget must not stay over the welcome.
@@ -177,6 +184,7 @@ export function createShell(): Shell {
       }
     },
     clearText: () => {
+      clearSelection();
       textElement.replaceChildren();
     },
     getSelectedChapter: () => ui.selectedChapter,
@@ -287,7 +295,30 @@ export function createShell(): Shell {
 
   // ---------------------------------------------------------------- highlight
 
+  // The tapped sentence and the "play from here" button next to it. Selection is a UI-only state, like scroll.
+  let selectedSentence: HTMLElement | undefined;
+  const playHereTemplate = byId("play-here-template", HTMLTemplateElement);
+  const playHereButton = (() => {
+    const button = playHereTemplate.content.firstElementChild;
+    if (!(button instanceof HTMLButtonElement)) throw new Error("#play-here-template needs a button");
+    return button;
+  })();
+
+  function clearSelection(): void {
+    selectedSentence?.classList.remove("selected");
+    selectedSentence = undefined;
+    playHereButton.remove();
+  }
+
+  function selectSentence(span: HTMLElement): void {
+    clearSelection();
+    selectedSentence = span;
+    span.classList.add("selected");
+    span.after(playHereButton);
+  }
+
   function renderText(sentences: Sentence[]): void {
+    clearSelection();
     textElement.replaceChildren();
     let paragraph = document.createElement("p");
     textElement.append(paragraph);
@@ -305,12 +336,22 @@ export function createShell(): Shell {
 
   function registerTextClickListener(): void {
     const { playback } = engine();
+    // A tap only selects a line and shows its "play from here" button, so scrolling never starts playback.
     textElement.addEventListener("click", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      const index = Number(target.dataset["index"]);
-      if (!Number.isInteger(index)) return;
-      playback.clickSentence(index);
+      if (!(target instanceof Element)) return;
+      if (target.closest(".play-here")) {
+        const index = Number(selectedSentence?.dataset["index"]);
+        clearSelection();
+        if (Number.isInteger(index)) playback.clickSentence(index);
+        return;
+      }
+      const span = target.closest("span[data-index]");
+      if (!(span instanceof HTMLElement) || span === selectedSentence) {
+        clearSelection();
+        return;
+      }
+      selectSentence(span);
     });
   }
 
@@ -330,7 +371,7 @@ export function createShell(): Shell {
   }
 
   function registerSettingsListeners(): void {
-    const { settings, mediaSession, voices } = engine();
+    const { settings, mediaSession, voices, playback } = engine();
     speedDownButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, -1), "slower"));
     speedUpButton.addEventListener("click", () => setSpeed(stepSpeed(settings.speed, 1), "faster"));
     speedResetButton.addEventListener("click", () => setSpeed(1, "reset"));
@@ -342,11 +383,13 @@ export function createShell(): Shell {
     voiceSelect.addEventListener("change", () => {
       settings.setVoiceId(voiceSelect.value);
       voices.select();
+      playback.applyVoiceChange();
     });
 
-    voiceDownloadButton.addEventListener("click", () => voices.startDownload());
-
-    voiceRemoveButton.addEventListener("click", () => voices.startRemove());
+    voiceActionButton.addEventListener("click", () => {
+      if (voiceActionButton.dataset["action"] === "remove") voices.startRemove();
+      else voices.startDownload();
+    });
   }
 
   function initSettings(): void {
@@ -434,9 +477,10 @@ export function createShell(): Shell {
       ui.chapterValue = chapterSelect.value;
       ui.selectedChapter = Number(chapterSelect.value);
       drawChapters();
-      // While generating, a picked chapter behaves like Previous/Next. While idle it shows the chapter text without audio.
+      // A picked chapter behaves like Previous/Next while generating, navigating or loaded (playing or paused).
+      // Only with nothing loaded does it show the chapter text without audio.
       const view = playback.view();
-      if (view.generating || view.navigating) void playback.selectChapter(hooks.getSelectedChapter());
+      if (view.generating || view.navigating || playback.hasLoaded()) void playback.selectChapter(hooks.getSelectedChapter());
       else {
         hooks.notifyChange();
         void playback.previewChapter(hooks.getSelectedChapter());

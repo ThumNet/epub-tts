@@ -51,9 +51,11 @@ export interface ControlsView {
   fileInputDisabled: boolean;
   prevDisabled: boolean;
   nextDisabled: boolean;
-  voiceDownloadDisabled: boolean;
-  voiceRemoveDisabled: boolean;
+  /** One button next to the voice select: Download when the voice is not stored, Remove when it is. */
+  voiceAction: { kind: "download" | "remove"; label: string; disabled: boolean };
   voiceStatusText: string;
+  /** True whenever the app generates, loads a voice or book, or switches chapter. Drives the activity bar. */
+  busy: boolean;
   savedText: string;
   voiceValue: string;
   speedLabel: string;
@@ -110,7 +112,7 @@ function primaryState(snapshot: Snapshot): PrimaryState {
 }
 
 export function deriveView(snapshot: Snapshot): ControlsView {
-  const { playback, voices, library, book, settings, saved, paused, now } = snapshot;
+  const { playback, voices, library, book, settings, saved, now } = snapshot;
   const locked = playback.generating || voices.busy || library.busy;
   const generateDisabled = locked || !book;
   const state = primaryState(snapshot);
@@ -120,15 +122,18 @@ export function deriveView(snapshot: Snapshot): ControlsView {
     secondaryHidden: state !== "resume",
     secondaryDisabled: generateDisabled,
     savedHidden: state !== "resume",
-    voiceSelectDisabled: locked,
+    voiceSelectDisabled: voices.busy || library.busy,
     forgetHidden: !library.remembered,
-    forgetDisabled: locked || library.busy || playback.navigating || !paused,
+    // Forget cancels a running generation first, so playing and paused do not block it.
+    forgetDisabled: voices.busy || library.busy || playback.navigating,
     fileInputDisabled: library.busy,
     prevDisabled: voices.busy || library.busy || playback.navigating || !playback.hasPrev,
     nextDisabled: voices.busy || library.busy || playback.navigating || !playback.hasNext,
-    voiceDownloadDisabled: locked || voices.stored !== false,
-    voiceRemoveDisabled: locked || voices.stored !== true,
+    voiceAction: voices.stored
+      ? { kind: "remove", label: "Remove voice", disabled: locked }
+      : { kind: "download", label: "Download voice", disabled: locked || voices.stored === undefined },
     voiceStatusText: voiceStatusText(voices, settings.voiceId),
+    busy: locked || playback.navigating,
     savedText: savedText(saved, now),
     voiceValue: settings.voiceId,
     speedLabel: `${settings.speed.toFixed(2)}x`,

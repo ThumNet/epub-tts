@@ -31,6 +31,7 @@
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
         </button>
       </header>
+      <div id="activity" class="activity" role="progressbar" aria-label="Working" aria-hidden="true" data-busy="false"></div>
 
       <div id="welcome" class="welcome">
         <h1>epub-tts</h1>
@@ -39,7 +40,10 @@
       </div>
 
       <div class="reader">
-        <div id="text"></div>
+        <div class="text-area">
+          <div id="text"></div>
+          <div id="stats" role="status"></div>
+        </div>
         <div class="controls">
           <button id="primary" type="button" data-state="open" disabled>
             <svg class="icon icon-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.5v15l13-7.5z" /></svg>
@@ -48,13 +52,17 @@
             <svg class="icon icon-resume" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5M4.5 4v4.5H9" /></svg>
             <span id="primary-label">Open an EPUB</span>
           </button>
-          <div id="saved" hidden></div>
-          <button id="listen-start" type="button" class="secondary" hidden>Listen from chapter start</button>
-          <div id="stats"></div>
+          <button id="listen-start" type="button" class="secondary" aria-label="Listen from chapter start" title="Listen from chapter start" hidden>From start</button>
           <audio id="audio" preload="auto" hidden></audio>
         </div>
       </div>
     </main>
+
+    <template id="play-here-template">
+      <button class="play-here" type="button" aria-label="Play from here" title="Play from here">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7 4.5v15l13-7.5z" /></svg>
+      </button>
+    </template>
 
     <input id="file" class="visually-hidden" type="file" accept=".epub,application/epub+zip" />
 
@@ -65,6 +73,7 @@
       </div>
       <div class="sheet-body">
         <div id="book"></div>
+        <div id="saved" hidden></div>
         <label class="open-button secondary" for="file">Open another book</label>
         <div class="field">
           <label for="chapter">Chapter</label>
@@ -86,13 +95,15 @@
       <div class="sheet-body">
         <div class="field">
           <label for="voice">Voice</label>
-          <select id="voice"></select>
+          <div class="voice-row">
+            <select id="voice"></select>
+            <button id="voice-action" class="voice-action" type="button" data-action="download" aria-label="Download voice" title="Download voice" disabled>
+              <svg class="icon-download" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v11M7 11l5 5 5-5M5 20h14" /></svg>
+              <svg class="icon-remove" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>
+            </button>
+          </div>
         </div>
         <span id="voice-status" role="status">Checking voice...</span>
-        <div class="row">
-          <button id="voice-download" type="button" disabled>Download</button>
-          <button id="voice-remove" type="button" disabled>Remove</button>
-        </div>
         <div class="field">
           <span>Speed</span>
           <div class="speed">

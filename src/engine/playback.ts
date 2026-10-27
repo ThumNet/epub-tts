@@ -105,6 +105,8 @@ export interface Playback {
   unloadChapter(): void;
   navigateChapter(step: 1 | -1, source: string): Promise<void>;
   selectChapter(index: number): Promise<void>;
+  /** The voice select changed (the settings already hold the new id). See the implementation for what restarts. */
+  applyVoiceChange(): void;
   /**
    * Show the text of a chapter without audio. `index` omitted means the first chapter with text, which is then
    * selected. Does nothing while a generation runs or a chapter is loaded. A late result for an older call is dropped.
@@ -317,6 +319,13 @@ export function createPlayback(deps: PlaybackDeps): Playback {
   }
 
   function playFromMediaSession(): void {
+    // The voice changed while paused: the loaded audio and the running generation still use the old voice.
+    if (loaded && loaded.voiceId !== getVoiceId() && !navigating && !isVoicesBusy()) {
+      log(`resume with a changed voice: restarting at the current sentence with ${getVoiceId()}`);
+      wantPlaying = true;
+      void jumpToSentence(Math.max(currentSentence, 0));
+      return;
+    }
     wantPlaying = true;
     // While buffering, audio is already paused, so no `play` event follows. Redraw for the new intent.
     hooks.notifyChange();
@@ -415,7 +424,10 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     });
   }
 
-  /** The body of the text click listener, after the shell parsed the sentence index from the event. */
+  /**
+   * "Play from here" for a sentence index the shell parsed from the DOM. It always starts playback, also from paused,
+   * for a sentence in the current segment, in another generated segment, or in no segment yet.
+   */
   function clickSentence(index: number): void {
     if (!loaded) {
       startFromPreview(index);
@@ -428,12 +440,24 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       return;
     }
     const offset = segment.timings[index - segment.startSentence]?.start ?? 0;
+    wantPlaying = true;
     if (segmentIndex === loaded.current) {
       audio.currentTime = offset;
+      if (audio.paused) {
+        buffering = false;
+        const startedAt = Date.now();
+        const promise = audio.play();
+        watchForStuckPlayback("play from here", true);
+        promise.then(
+          () => log(`audio.play() resolved after ${Date.now() - startedAt} ms (play from here)`),
+          (error: unknown) => log(`audio.play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
+        );
+        hooks.notifyChange();
+      }
       return;
     }
     log(`seek to sentence ${index + 1} in segment ${segmentIndex + 1}`);
-    loadSegment(segmentIndex, offset, !audio.paused, "seek");
+    loadSegment(segmentIndex, offset, true, "seek");
   }
 
   // ---------------------------------------------------------------- segment switching
@@ -959,15 +983,18 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       if (generating) {
         log(`chapter change (${source}): cancelling the running generation`);
         cancelGeneration();
-        await activeGeneration;
       }
+      // Show the new text now, before the cancelled generation settles (a cancel only takes effect after the current
+      // sentence). The old audio would stop anyway, and its text and highlight would not match the next audio. After a
+      // cancel the old run can no longer load a segment, so unloading here is safe.
+      hooks.showChapter(target.chapterIndex);
+      if (loaded) unloadChapter();
+      hooks.renderChapter(target.sentences);
+      await activeGeneration;
       if (generating || book !== bookStore.opened) {
         showPlayingChapter();
         return;
       }
-      hooks.showChapter(target.chapterIndex);
-      // Nothing is loaded yet, so show the text now. A loaded chapter keeps its text until the new first segment starts.
-      if (!loaded) hooks.renderChapter(target.sentences);
       void generateChapter(target.chapterIndex, 0, target.sentences);
     } catch (error) {
       hooks.setStatus(`Could not change the chapter: ${errorName(error)}`);
@@ -1012,6 +1039,16 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       navigating = false;
       hooks.notifyChange();
     }
+  }
+
+  /**
+   * The voice select changed. A chapter that plays with another voice restarts at the current sentence with the new
+   * one (the same restart as a jump). When paused or idle nothing restarts: the next generation reads the new voice.
+   */
+  function applyVoiceChange(): void {
+    if (!loaded || !wantPlaying || loaded.voiceId === getVoiceId()) return;
+    log(`voice changed while playing: restarting at the current sentence with ${getVoiceId()}`);
+    void jumpToSentence(Math.max(currentSentence, 0));
   }
 
   /** Previous or next chapter with text, relative to the playing chapter. Used by buttons and lock-screen actions. */
@@ -1140,6 +1177,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     unloadChapter,
     navigateChapter,
     selectChapter,
+    applyVoiceChange,
     previewChapter,
     clickSentence,
     hasLoaded: () => loaded !== undefined,

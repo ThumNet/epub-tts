@@ -120,15 +120,20 @@ describe("deriveView: locks", () => {
   });
 
   it.each([
-    ["generating", snap({ playback: pb({ generating: true }), saved: savedFor("a.epub:10") })],
     ["voices.busy", snap({ voices: { busy: true, stored: true, message: "x", error: "" }, saved: savedFor("a.epub:10") })],
     ["library.busy", snap({ library: { busy: true, remembered: true }, saved: savedFor("a.epub:10") })],
-  ])("locks voice select and voice buttons when %s", (_name, snapshot) => {
+  ])("locks voice select, voice action and Forget when %s", (_name, snapshot) => {
     const view = deriveView(snapshot);
     expect(view.voiceSelectDisabled).toBe(true);
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(true);
+    expect(view.voiceAction.disabled).toBe(true);
     expect(view.forgetDisabled).toBe(true);
+  });
+
+  it("keeps the voice select and Forget enabled while generating, but locks the voice action", () => {
+    const view = deriveView(snap({ playback: pb({ generating: true }), loaded: true, saved: savedFor("a.epub:10") }));
+    expect(view.voiceSelectDisabled).toBe(false);
+    expect(view.forgetDisabled).toBe(false);
+    expect(view.voiceAction.disabled).toBe(true);
   });
 
   it("disables the file input only while the library is busy", () => {
@@ -142,12 +147,23 @@ describe("deriveView: forget", () => {
     expect(deriveView(snap({ library: { busy: false, remembered: false } })).forgetHidden).toBe(true);
     expect(deriveView(snap()).forgetHidden).toBe(false);
   });
-  it("is disabled while audio plays", () => {
-    expect(deriveView(snap({ paused: false })).forgetDisabled).toBe(true);
+  it("stays enabled while audio plays and while paused with generation running", () => {
+    expect(deriveView(snap({ paused: false, loaded: true, playback: pb({ generating: true, wantPlaying: true }) })).forgetDisabled).toBe(false);
+    expect(deriveView(snap({ paused: true, loaded: true, playback: pb({ generating: true }) })).forgetDisabled).toBe(false);
   });
   it("is disabled while navigating", () => {
     const navigating = pb({ navigating: true });
     expect(deriveView(snap({ playback: navigating })).forgetDisabled).toBe(true);
+  });
+});
+
+describe("deriveView: busy", () => {
+  it("is false when idle and true for generating, navigating, voices busy or library busy", () => {
+    expect(deriveView(snap()).busy).toBe(false);
+    expect(deriveView(snap({ playback: pb({ generating: true }) })).busy).toBe(true);
+    expect(deriveView(snap({ playback: pb({ navigating: true }) })).busy).toBe(true);
+    expect(deriveView(snap({ voices: { busy: true, stored: true, message: "", error: "" } })).busy).toBe(true);
+    expect(deriveView(snap({ library: { busy: true, remembered: true } })).busy).toBe(true);
   });
 });
 
@@ -194,21 +210,20 @@ describe("deriveView: previous and next", () => {
   });
 });
 
-describe("deriveView: voice buttons and status", () => {
-  it("enables download only when not stored", () => {
+describe("deriveView: voice action and status", () => {
+  it("is Download, enabled, when the voice is not stored", () => {
     const view = deriveView(snap({ voices: { busy: false, stored: false, message: "", error: "" } }));
-    expect(view.voiceDownloadDisabled).toBe(false);
-    expect(view.voiceRemoveDisabled).toBe(true);
+    expect(view.voiceAction).toEqual({ kind: "download", label: "Download voice", disabled: false });
   });
-  it("enables remove only when stored", () => {
-    const view = deriveView(snap());
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(false);
+  it("is Remove, enabled, when the voice is stored", () => {
+    expect(deriveView(snap()).voiceAction).toEqual({ kind: "remove", label: "Remove voice", disabled: false });
   });
-  it("disables both when the status is unknown", () => {
+  it("is a disabled Download when the status is unknown", () => {
     const view = deriveView(snap({ voices: { busy: false, stored: undefined, message: "", error: "" } }));
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(true);
+    expect(view.voiceAction).toEqual({ kind: "download", label: "Download voice", disabled: true });
+  });
+  it("is disabled while generating", () => {
+    expect(deriveView(snap({ playback: pb({ generating: true }) })).voiceAction.disabled).toBe(true);
   });
 
   it.each([
