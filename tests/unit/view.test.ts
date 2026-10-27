@@ -11,13 +11,25 @@ const pb = (overrides: Partial<Playback> = {}): Playback => ({
   navigationBase: 0,
   hasPrev: true,
   hasNext: true,
+  voicesInUse: [],
+  ...overrides,
+});
+
+const KRISTIN = "en_US-kristin-medium";
+type Voices = Snapshot["voices"];
+const vs = (overrides: Partial<Voices> = {}): Voices => ({
+  busy: false,
+  stored: true,
+  storedIds: [KRISTIN],
+  message: "",
+  error: "",
   ...overrides,
 });
 
 function snap(overrides: Partial<Snapshot> = {}): Snapshot {
   return {
     playback: pb(),
-    voices: { busy: false, stored: true, message: "", error: "" },
+    voices: vs(),
     library: { busy: false, remembered: true },
     book: { id: "a.epub:10", title: "Book A" },
     settings: { voiceId: "en_US-kristin-medium", speed: 1 },
@@ -77,12 +89,12 @@ describe("deriveView: primary state and rule order", () => {
   });
 
   it("disables listen and resume when locked, never stop, pause or play", () => {
-    const voicesBusy = { busy: true, stored: true, message: "x", error: "" };
+    const voicesBusy = vs({ busy: true, message: "x" });
     expect(deriveView(snap({ voices: voicesBusy })).primary.disabled).toBe(true);
     expect(deriveView(snap({ voices: voicesBusy, saved: same })).primary.disabled).toBe(true);
     expect(deriveView(snap({ library: { busy: true, remembered: true } })).primary.disabled).toBe(true);
     expect(deriveView(snap({ voices: voicesBusy, playback: pb({ generating: true }) })).primary.disabled).toBe(false);
-    expect(deriveView(snap({ voices: voicesBusy, loaded: true })).primary.disabled).toBe(false);
+    expect(deriveView(snap({ voices: voicesBusy, loaded: true, playback: pb({ voicesInUse: [KRISTIN] }) })).primary.disabled).toBe(false);
     expect(deriveView(snap({ library: { busy: true, remembered: true }, loaded: true, playback: pb({ wantPlaying: true }) })).primary.disabled).toBe(false);
   });
   it("enables listen and resume when idle", () => {
@@ -106,7 +118,7 @@ describe("deriveView: primary state and rule order", () => {
   });
   it("disables the secondary button like Listen: locked or no book", () => {
     expect(deriveView(snap({ saved: same })).secondaryDisabled).toBe(false);
-    expect(deriveView(snap({ saved: same, voices: { busy: true, stored: true, message: "", error: "" } })).secondaryDisabled).toBe(true);
+    expect(deriveView(snap({ saved: same, voices: vs({ busy: true }) })).secondaryDisabled).toBe(true);
     expect(deriveView(snap({ saved: same, library: { busy: true, remembered: true } })).secondaryDisabled).toBe(true);
     expect(deriveView(snap({ book: undefined })).secondaryDisabled).toBe(true);
   });
@@ -120,20 +132,25 @@ describe("deriveView: locks", () => {
   });
 
   it.each([
-    ["generating", snap({ playback: pb({ generating: true }), saved: savedFor("a.epub:10") })],
-    ["voices.busy", snap({ voices: { busy: true, stored: true, message: "x", error: "" }, saved: savedFor("a.epub:10") })],
+    ["voices.busy", snap({ voices: vs({ busy: true, message: "x" }), saved: savedFor("a.epub:10") })],
     ["library.busy", snap({ library: { busy: true, remembered: true }, saved: savedFor("a.epub:10") })],
-  ])("locks voice select and voice buttons when %s", (_name, snapshot) => {
+  ])("locks voice select, voice action and Forget when %s", (_name, snapshot) => {
     const view = deriveView(snapshot);
     expect(view.voiceSelectDisabled).toBe(true);
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(true);
+    expect(view.voiceAction.disabled).toBe(true);
     expect(view.forgetDisabled).toBe(true);
+  });
+
+  it("keeps the voice select, Forget and the voice action enabled while generating", () => {
+    const view = deriveView(snap({ playback: pb({ generating: true }), loaded: true, saved: savedFor("a.epub:10") }));
+    expect(view.voiceSelectDisabled).toBe(false);
+    expect(view.forgetDisabled).toBe(false);
+    expect(view.voiceAction.disabled).toBe(false);
   });
 
   it("disables the file input only while the library is busy", () => {
     expect(deriveView(snap({ library: { busy: true, remembered: false } })).fileInputDisabled).toBe(true);
-    expect(deriveView(snap({ voices: { busy: true, stored: true, message: "", error: "" } })).fileInputDisabled).toBe(false);
+    expect(deriveView(snap({ voices: vs({ busy: true }) })).fileInputDisabled).toBe(false);
   });
 });
 
@@ -142,12 +159,23 @@ describe("deriveView: forget", () => {
     expect(deriveView(snap({ library: { busy: false, remembered: false } })).forgetHidden).toBe(true);
     expect(deriveView(snap()).forgetHidden).toBe(false);
   });
-  it("is disabled while audio plays", () => {
-    expect(deriveView(snap({ paused: false })).forgetDisabled).toBe(true);
+  it("stays enabled while audio plays and while paused with generation running", () => {
+    expect(deriveView(snap({ paused: false, loaded: true, playback: pb({ generating: true, wantPlaying: true }) })).forgetDisabled).toBe(false);
+    expect(deriveView(snap({ paused: true, loaded: true, playback: pb({ generating: true }) })).forgetDisabled).toBe(false);
   });
   it("is disabled while navigating", () => {
     const navigating = pb({ navigating: true });
     expect(deriveView(snap({ playback: navigating })).forgetDisabled).toBe(true);
+  });
+});
+
+describe("deriveView: busy", () => {
+  it("is false when idle and true for generating, navigating, voices busy or library busy", () => {
+    expect(deriveView(snap()).busy).toBe(false);
+    expect(deriveView(snap({ playback: pb({ generating: true }) })).busy).toBe(true);
+    expect(deriveView(snap({ playback: pb({ navigating: true }) })).busy).toBe(true);
+    expect(deriveView(snap({ voices: vs({ busy: true }) })).busy).toBe(true);
+    expect(deriveView(snap({ library: { busy: true, remembered: true } })).busy).toBe(true);
   });
 });
 
@@ -179,7 +207,7 @@ describe("deriveView: previous and next", () => {
     const navigating = pb({ navigating: true });
     expect(deriveView(snap({ playback: navigating })).prevDisabled).toBe(true);
     expect(deriveView(snap({ playback: navigating })).nextDisabled).toBe(true);
-    const voicesBusy = snap({ voices: { busy: true, stored: true, message: "", error: "" } });
+    const voicesBusy = snap({ voices: vs({ busy: true }) });
     expect(deriveView(voicesBusy).prevDisabled).toBe(true);
     expect(deriveView(voicesBusy).nextDisabled).toBe(true);
     const libraryBusy = snap({ library: { busy: true, remembered: true } });
@@ -194,41 +222,104 @@ describe("deriveView: previous and next", () => {
   });
 });
 
-describe("deriveView: voice buttons and status", () => {
-  it("enables download only when not stored", () => {
-    const view = deriveView(snap({ voices: { busy: false, stored: false, message: "", error: "" } }));
-    expect(view.voiceDownloadDisabled).toBe(false);
-    expect(view.voiceRemoveDisabled).toBe(true);
+describe("deriveView: voice action and status", () => {
+  const other = "en_US-john-medium";
+  it("is Download, enabled, when the voice is not stored", () => {
+    const view = deriveView(snap({ voices: vs({ stored: false, storedIds: [] }) }));
+    expect(view.voiceAction).toEqual({ kind: "download", label: "Download voice", disabled: false });
   });
-  it("enables remove only when stored", () => {
-    const view = deriveView(snap());
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(false);
+  it("is Remove, enabled, when the voice is stored", () => {
+    expect(deriveView(snap()).voiceAction).toEqual({ kind: "remove", label: "Remove voice", disabled: false });
   });
-  it("disables both when the status is unknown", () => {
-    const view = deriveView(snap({ voices: { busy: false, stored: undefined, message: "", error: "" } }));
-    expect(view.voiceDownloadDisabled).toBe(true);
-    expect(view.voiceRemoveDisabled).toBe(true);
+  it("is a disabled Download when the status is unknown", () => {
+    const view = deriveView(snap({ voices: vs({ stored: undefined, storedIds: undefined }) }));
+    expect(view.voiceAction).toEqual({ kind: "download", label: "Download voice", disabled: true });
+  });
+
+  it("allows Download while generating, playing and paused", () => {
+    const voices = vs({ stored: false, storedIds: [] });
+    const generating = deriveView(snap({ voices, playback: pb({ generating: true, voicesInUse: [other] }) }));
+    expect(generating.voiceAction.disabled).toBe(false);
+    const playing = deriveView(snap({ voices, loaded: true, playback: pb({ wantPlaying: true, voicesInUse: [other] }) }));
+    expect(playing.voiceAction.disabled).toBe(false);
+    const paused = deriveView(snap({ voices, loaded: true, playback: pb({ voicesInUse: [other] }) }));
+    expect(paused.voiceAction.disabled).toBe(false);
+  });
+  it("allows Remove of a voice that is not in use while generating, playing and paused", () => {
+    const voices = vs({ storedIds: [KRISTIN, other] });
+    for (const wantPlaying of [true, false]) {
+      const view = deriveView(snap({ voices, loaded: true, playback: pb({ generating: true, wantPlaying, voicesInUse: [other] }) }));
+      expect(view.voiceAction).toEqual({ kind: "remove", label: "Remove voice", disabled: false });
+    }
+  });
+  it("disables Remove for the voice that the loaded chapter or the generation uses", () => {
+    const loaded = deriveView(snap({ loaded: true, playback: pb({ voicesInUse: [KRISTIN] }) }));
+    expect(loaded.voiceAction).toEqual({ kind: "remove", label: "Remove voice", disabled: true });
+    const generating = deriveView(snap({ playback: pb({ generating: true, voicesInUse: [KRISTIN] }) }));
+    expect(generating.voiceAction.disabled).toBe(true);
+  });
+  it("disables Download for the voice that the loaded chapter or the generation uses, but not for another voice", () => {
+    const voices = vs({ stored: false, storedIds: [] });
+    const inUse = pb({ generating: true, voicesInUse: [KRISTIN] });
+    expect(deriveView(snap({ voices, playback: inUse })).voiceAction).toEqual({
+      kind: "download",
+      label: "Download voice",
+      disabled: true,
+    });
+    expect(deriveView(snap({ voices, loaded: true, playback: pb({ voicesInUse: [KRISTIN] }) })).voiceAction.disabled).toBe(true);
+    const another = deriveView(snap({ voices, settings: { voiceId: other, speed: 1 }, playback: inUse }));
+    expect(another.voiceAction.disabled).toBe(false);
+  });
+  it("disables Download and Remove while a chapter change or a voice restart is in flight", () => {
+    const download = vs({ stored: false, storedIds: [] });
+    expect(deriveView(snap({ voices: download, playback: pb({ navigating: true }) })).voiceAction.disabled).toBe(true);
+    expect(deriveView(snap({ voices: download })).voiceAction.disabled).toBe(false);
+    expect(deriveView(snap({ playback: pb({ navigating: true }) })).voiceAction).toEqual({
+      kind: "remove",
+      label: "Remove voice",
+      disabled: true,
+    });
+    expect(deriveView(snap()).voiceAction.disabled).toBe(false);
+  });
+  it("disables Play while a voice action runs and the selected voice is not the loaded one", () => {
+    const loadedWith = (voicesInUse: string[], busy: boolean) =>
+      deriveView(snap({ loaded: true, voices: vs({ busy, message: "Downloading 3%" }), playback: pb({ voicesInUse }) })).primary;
+    expect(loadedWith([other], true)).toMatchObject({ state: "play", disabled: true });
+    expect(loadedWith([KRISTIN], true).disabled).toBe(false);
+    expect(loadedWith([other], false).disabled).toBe(false);
+  });
+  it("disables the action while a voice action or a library action runs", () => {
+    expect(deriveView(snap({ voices: vs({ busy: true }) })).voiceAction.disabled).toBe(true);
+    expect(deriveView(snap({ library: { busy: true, remembered: true } })).voiceAction.disabled).toBe(true);
   });
 
   it.each([
-    ["busy shows the message", { busy: true, stored: false, message: "Downloading 40%", error: "boom" }, "Downloading 40%"],
-    ["error shows the error", { busy: false, stored: true, message: "m", error: "boom" }, "boom"],
-    ["unknown", { busy: false, stored: undefined, message: "", error: "" }, "Status unknown"],
-    ["stored", { busy: false, stored: true, message: "", error: "" }, "Downloaded"],
-    ["not stored", { busy: false, stored: false, message: "", error: "" }, "Not downloaded (about 61 MB)"],
+    ["busy shows the message", vs({ busy: true, stored: false, message: "Downloading 40%", error: "boom" }), "Downloading 40%"],
+    ["error shows the error", vs({ error: "boom", message: "m" }), "boom"],
+    ["unknown", vs({ stored: undefined, storedIds: undefined }), "Status unknown"],
+    ["stored is empty", vs(), ""],
+    ["not stored is empty", vs({ stored: false, storedIds: [] }), ""],
   ])("status text: %s", (_name, voices, expected) => {
     expect(deriveView(snap({ voices })).voiceStatusText).toBe(expected);
   });
 
-  it("falls back to 61 MB for an unknown voice", () => {
-    const view = deriveView(
-      snap({
-        voices: { busy: false, stored: false, message: "", error: "" },
-        settings: { voiceId: "no-such-voice", speed: 1 },
-      }),
-    );
-    expect(view.voiceStatusText).toBe("Not downloaded (about 61 MB)");
+  describe("options", () => {
+    const textOf = (view: ReturnType<typeof deriveView>, id: string): string | undefined =>
+      view.voiceOptions.find((option) => option.id === id)?.text;
+    it("show only the label for stored voices and add the size hint to the others", () => {
+      const view = deriveView(snap({ voices: vs({ storedIds: [KRISTIN] }) }));
+      expect(view.voiceOptions).toHaveLength(5);
+      expect(textOf(view, KRISTIN)).toBe("Kristin (US, female)");
+      expect(textOf(view, other)).toBe("John (US, male) - 61 MB, not downloaded");
+    });
+    it("change when the stored list changes", () => {
+      expect(textOf(deriveView(snap({ voices: vs({ storedIds: [KRISTIN, other] }) })), other)).toBe("John (US, male)");
+      expect(textOf(deriveView(snap({ voices: vs({ storedIds: [KRISTIN] }) })), other)).toContain("not downloaded");
+    });
+    it("show plain labels when the storage is unknown", () => {
+      const view = deriveView(snap({ voices: vs({ stored: undefined, storedIds: undefined }) }));
+      expect(view.voiceOptions.every((option) => !option.text.includes("not downloaded"))).toBe(true);
+    });
   });
 });
 

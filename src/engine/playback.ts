@@ -89,12 +89,15 @@ export interface PlaybackDeps {
 /** Live values of the flags the controls read. A plain object created at call time. */
 export interface PlaybackView {
   generating: boolean;
+  /** True while a chapter change or a jump (also a changed-voice restart) cancels and restarts the generation. */
   navigating: boolean;
   /** The user's intent to hear audio. It stays true across the pause between two segments. */
   wantPlaying: boolean;
   navigationBase: number;
   hasPrev: boolean;
   hasNext: boolean;
+  /** Voice ids that the loaded chapter, the running generation or a running regeneration uses. Empty when idle. */
+  voicesInUse: readonly string[];
 }
 
 export interface Playback {
@@ -105,6 +108,8 @@ export interface Playback {
   unloadChapter(): void;
   navigateChapter(step: 1 | -1, source: string): Promise<void>;
   selectChapter(index: number): Promise<void>;
+  /** The voice select changed (the settings already hold the new id). See the implementation for what restarts. */
+  applyVoiceChange(): void;
   /**
    * Show the text of a chapter without audio. `index` omitted means the first chapter with text, which is then
    * selected. Does nothing while a generation runs or a chapter is loaded. A late result for an older call is dropped.
@@ -153,6 +158,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
   let buffering = false;
   // True while the user wants sound: set by play, cleared by a user or media-session pause.
   let wantPlaying = false;
+  const VOICE_BUSY_STATUS = "Wait for the voice download to finish.";
 
   /** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
   function applyPlaybackRate(): void {
@@ -316,7 +322,26 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     }, STUCK_CHECK_MS);
   }
 
+  /**
+   * The voice changed while paused: the loaded audio and the running generation still use the old voice.
+   * Restart at `index` with the new voice. Returns true when it handled the request. While a voice download or
+   * removal runs it only says so and changes nothing: the worker must not read the voice files that the download writes.
+   */
+  function restartForChangedVoice(index: number, action: string, where: string): boolean {
+    if (!loaded || loaded.voiceId === getVoiceId() || navigating) return false;
+    if (isVoicesBusy()) {
+      log(`${action} ignored: a voice download or removal is running`);
+      hooks.setStatus(VOICE_BUSY_STATUS);
+      return true;
+    }
+    log(`${action} with a changed voice: restarting at ${where} with ${getVoiceId()}`);
+    wantPlaying = true;
+    void jumpToSentence(index);
+    return true;
+  }
+
   function playFromMediaSession(): void {
+    if (restartForChangedVoice(Math.max(currentSentence, 0), "resume", "the current sentence")) return;
     wantPlaying = true;
     // While buffering, audio is already paused, so no `play` event follows. Redraw for the new intent.
     hooks.notifyChange();
@@ -415,12 +440,16 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     });
   }
 
-  /** The body of the text click listener, after the shell parsed the sentence index from the event. */
+  /**
+   * "Play from here" for a sentence index the shell parsed from the DOM. It always starts playback, also from paused,
+   * for a sentence in the current segment, in another generated segment, or in no segment yet.
+   */
   function clickSentence(index: number): void {
     if (!loaded) {
       startFromPreview(index);
       return;
     }
+    if (restartForChangedVoice(index, "play from here", `sentence ${index + 1}`)) return;
     const segmentIndex = segmentForSentence(loaded.segments, index);
     const segment = loaded.segments[segmentIndex];
     if (!segment) {
@@ -428,12 +457,24 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       return;
     }
     const offset = segment.timings[index - segment.startSentence]?.start ?? 0;
+    wantPlaying = true;
     if (segmentIndex === loaded.current) {
       audio.currentTime = offset;
+      if (audio.paused) {
+        buffering = false;
+        const startedAt = Date.now();
+        const promise = audio.play();
+        watchForStuckPlayback("play from here", true);
+        promise.then(
+          () => log(`audio.play() resolved after ${Date.now() - startedAt} ms (play from here)`),
+          (error: unknown) => log(`audio.play() rejected after ${Date.now() - startedAt} ms: ${errorName(error)}`),
+        );
+        hooks.notifyChange();
+      }
       return;
     }
     log(`seek to sentence ${index + 1} in segment ${segmentIndex + 1}`);
-    loadSegment(segmentIndex, offset, !audio.paused, "seek");
+    loadSegment(segmentIndex, offset, true, "seek");
   }
 
   // ---------------------------------------------------------------- segment switching
@@ -614,6 +655,16 @@ export function createPlayback(deps: PlaybackDeps): Playback {
   }
 
   const regenerations = new WeakMap<Segment, Promise<boolean>>();
+  // Voices of the regenerations in flight, with a count. A regeneration may still read a voice that no chapter or
+  // generation uses any more, so `view().voicesInUse` includes these.
+  const regeneratingVoices = new Map<string, number>();
+
+  function markRegenerating(voiceId: string, change: 1 | -1): void {
+    const count = (regeneratingVoices.get(voiceId) ?? 0) + change;
+    if (count > 0) regeneratingVoices.set(voiceId, count);
+    else regeneratingVoices.delete(voiceId);
+    hooks.notifyChange();
+  }
 
   // Bumped by the Cancel button. A regeneration started before the bump stops queueing sentences.
   let cancelEpoch = 0;
@@ -655,6 +706,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       log(`segment ${segmentIndex + 1} regenerating`);
       hooks.setStatus("Preparing the audio again...");
       const startedAt = performance.now();
+      markRegenerating(active.voiceId, 1);
       try {
         await workerClient.ensure(active.voiceId);
         const clips: Clip[] = [];
@@ -691,6 +743,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         return false;
       } finally {
         regenerations.delete(segment);
+        markRegenerating(active.voiceId, -1);
       }
     })();
     regenerations.set(segment, task);
@@ -959,15 +1012,18 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       if (generating) {
         log(`chapter change (${source}): cancelling the running generation`);
         cancelGeneration();
-        await activeGeneration;
       }
+      // Show the new text now, before the cancelled generation settles (a cancel only takes effect after the current
+      // sentence). The old audio would stop anyway, and its text and highlight would not match the next audio. After a
+      // cancel the old run can no longer load a segment, so unloading here is safe.
+      hooks.showChapter(target.chapterIndex);
+      if (loaded) unloadChapter();
+      hooks.renderChapter(target.sentences);
+      await activeGeneration;
       if (generating || book !== bookStore.opened) {
         showPlayingChapter();
         return;
       }
-      hooks.showChapter(target.chapterIndex);
-      // Nothing is loaded yet, so show the text now. A loaded chapter keeps its text until the new first segment starts.
-      if (!loaded) hooks.renderChapter(target.sentences);
       void generateChapter(target.chapterIndex, 0, target.sentences);
     } catch (error) {
       hooks.setStatus(`Could not change the chapter: ${errorName(error)}`);
@@ -1012,6 +1068,16 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       navigating = false;
       hooks.notifyChange();
     }
+  }
+
+  /**
+   * The voice select changed. A chapter that plays with another voice restarts at the current sentence with the new
+   * one (the same restart as a jump). When paused or idle nothing restarts: the next generation reads the new voice.
+   */
+  function applyVoiceChange(): void {
+    if (!loaded || !wantPlaying || loaded.voiceId === getVoiceId()) return;
+    log(`voice changed while playing: restarting at the current sentence with ${getVoiceId()}`);
+    void jumpToSentence(Math.max(currentSentence, 0));
   }
 
   /** Previous or next chapter with text, relative to the playing chapter. Used by buttons and lock-screen actions. */
@@ -1140,6 +1206,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     unloadChapter,
     navigateChapter,
     selectChapter,
+    applyVoiceChange,
     previewChapter,
     clickSentence,
     hasLoaded: () => loaded !== undefined,
@@ -1158,6 +1225,13 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         navigationBase: base,
         hasPrev: hasTextChapter(base, -1),
         hasNext: hasTextChapter(base, 1),
+        voicesInUse: [
+          ...new Set([
+            ...(loaded ? [loaded.voiceId] : []),
+            ...(generating ? [generationVoiceId] : []),
+            ...regeneratingVoices.keys(),
+          ]),
+        ],
       };
     },
     registerPlayPauseListeners,

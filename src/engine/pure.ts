@@ -108,9 +108,9 @@ export function roundSpeed(value: number): number {
   return Math.round(clampSpeed(value) * 100) / 100;
 }
 
-export const SPEED_STEP = 0.25;
+export const SPEED_STEP = 0.05;
 
-/** One button press: move by SPEED_STEP from the current value, then clamp and round. An off-grid start stays off-grid. */
+/** One button press: move by SPEED_STEP from the current value, then clamp and round (rounding removes float drift). An off-grid start stays off-grid. */
 export function stepSpeed(current: number, direction: 1 | -1): number {
   return roundSpeed(current + direction * SPEED_STEP);
 }

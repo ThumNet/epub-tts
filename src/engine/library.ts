@@ -19,7 +19,6 @@ export interface LibraryDeps {
   activeGeneration(): Promise<void>;
   unloadChapter(): void;
   isNavigating(): boolean;
-  isPaused(): boolean;
   voicesBusy(): boolean;
   /** Show a chapter's text without audio. No index means the first chapter with text. Runs in the background. */
   previewChapter(index?: number): Promise<void>;
@@ -36,7 +35,7 @@ export interface Library {
 }
 
 export function createLibrary(deps: LibraryDeps): Library {
-  const { hooks, bookStore, isGenerating, cancelGeneration, activeGeneration, unloadChapter, isNavigating, isPaused, voicesBusy, previewChapter } =
+  const { hooks, bookStore, isGenerating, cancelGeneration, activeGeneration, unloadChapter, isNavigating, voicesBusy, previewChapter } =
     deps;
   // Token of the newest book request (picked file, automatic restore or forget). A result with an older token is dropped.
   let bookToken = 0;
@@ -158,12 +157,19 @@ export function createLibrary(deps: LibraryDeps): Library {
   }
 
   function forget(): void {
-    if (!bookRemembered || bookBusy || isGenerating() || voicesBusy() || isNavigating() || !isPaused()) return;
+    if (!bookRemembered || bookBusy || voicesBusy() || isNavigating()) return;
     const token = ++bookToken;
     bookBusy = true;
     hooks.notifyChange();
     void (async () => {
       try {
+        // Forget works while playing or paused. A running generation (also the one that prefetches behind a paused chapter) stops first.
+        if (isGenerating()) {
+          log("forget: cancelling the running generation");
+          cancelGeneration();
+          await activeGeneration();
+          if (token !== bookToken) return;
+        }
         const ok = await forgetBook();
         if (token !== bookToken) return;
         if (!ok) {

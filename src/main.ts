@@ -41,7 +41,9 @@ const settings = createSettings({ audio });
 const voices = createVoicesStore({
   hooks,
   getVoiceId: () => settings.voiceId,
-  isGenerating: () => playback.view().generating,
+  isVoiceInUse: (id) => playback.view().voicesInUse.includes(id),
+  isLibraryBusy: () => library.busy,
+  isTransitioning: () => playback.view().navigating,
   persistSettings: () => settings.persist(),
 });
 const library = createLibrary({
@@ -52,7 +54,6 @@ const library = createLibrary({
   activeGeneration: () => playback.activeGeneration(),
   unloadChapter: () => playback.unloadChapter(),
   isNavigating: () => playback.view().navigating,
-  isPaused: () => audio.paused,
   voicesBusy: () => voices.busy,
   previewChapter: (index) => playback.previewChapter(index),
 });

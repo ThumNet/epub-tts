@@ -3,12 +3,20 @@ import { SPEED_MAX, SPEED_MIN } from "../engine/config";
 import type { ChapterInfo } from "../epub";
 import type { PlaybackView } from "../engine/playback";
 import type { SavedPosition } from "../store";
-import { findVoice } from "../voices";
+import { VOICES } from "../voices";
 
 /** Plain values read from the engine and the browser at one moment. */
 export interface Snapshot {
   playback: PlaybackView;
-  voices: { busy: boolean; stored: boolean | undefined; message: string; error: string };
+  voices: {
+    busy: boolean;
+    /** Whether the selected voice is stored. Undefined when unknown. */
+    stored: boolean | undefined;
+    /** Every stored voice id. Undefined when the storage is unknown. */
+    storedIds: readonly string[] | undefined;
+    message: string;
+    error: string;
+  };
   library: { busy: boolean; remembered: boolean };
   book: { id: string; title: string } | undefined;
   settings: { voiceId: string; speed: number };
@@ -51,9 +59,14 @@ export interface ControlsView {
   fileInputDisabled: boolean;
   prevDisabled: boolean;
   nextDisabled: boolean;
-  voiceDownloadDisabled: boolean;
-  voiceRemoveDisabled: boolean;
+  /** One button next to the voice select: Download when the voice is not stored, Remove when it is. */
+  voiceAction: { kind: "download" | "remove"; label: string; disabled: boolean };
+  /** Progress, error or "Status unknown". Empty (the element hides) when there is nothing to report. */
   voiceStatusText: string;
+  /** The dropdown entries. A voice that is not downloaded carries its size in the text, because tooltips do not work on touch screens. */
+  voiceOptions: ReadonlyArray<{ id: string; text: string }>;
+  /** True whenever the app generates, loads a voice or book, or switches chapter. Drives the activity bar. */
+  busy: boolean;
   savedText: string;
   voiceValue: string;
   speedLabel: string;
@@ -68,13 +81,21 @@ export function chapterNameText(chapters: ReadonlyArray<ChapterInfo>, index: num
   return chapters.find((c) => c.index === index)?.title ?? "";
 }
 
-function voiceStatusText(voices: Snapshot["voices"], voiceId: string): string {
+function voiceStatusText(voices: Snapshot["voices"]): string {
   if (voices.busy) return voices.message;
   if (voices.error) return voices.error;
   if (voices.stored === undefined) return "Status unknown";
-  if (voices.stored) return "Downloaded";
-  const size = findVoice(voiceId)?.sizeMb ?? 61;
-  return `Not downloaded (about ${Math.round(size)} MB)`;
+  return "";
+}
+
+function voiceOptions(storedIds: readonly string[] | undefined): ControlsView["voiceOptions"] {
+  return VOICES.map((voice) => ({
+    id: voice.id,
+    text:
+      storedIds === undefined || storedIds.includes(voice.id)
+        ? voice.label
+        : `${voice.label} - ${Math.round(voice.sizeMb)} MB, not downloaded`,
+  }));
 }
 
 /** "just now" under one minute, then "N min ago", "N h ago" and "N day(s) ago". Whole units, rounded down. */
@@ -110,25 +131,40 @@ function primaryState(snapshot: Snapshot): PrimaryState {
 }
 
 export function deriveView(snapshot: Snapshot): ControlsView {
-  const { playback, voices, library, book, settings, saved, paused, now } = snapshot;
+  const { playback, voices, library, book, settings, saved, now } = snapshot;
   const locked = playback.generating || voices.busy || library.busy;
   const generateDisabled = locked || !book;
+  // Playing, paused and generating do not block a voice download or removal. The worker holds its model in memory.
+  // The voice that the loaded chapter or the running generation uses stays locked, because the worker reads its files.
+  const voiceActionLocked = voices.busy || library.busy;
+  const inUse = playback.voicesInUse.includes(settings.voiceId);
   const state = primaryState(snapshot);
-  const disabled = state === "open" ? library.busy : state === "resume" || state === "listen" ? locked || !book : false;
+  // Play would restart with the selected voice, and the worker must not read the files while a voice action writes them.
+  const playBlocked = state === "play" && voices.busy && !inUse;
+  const disabled =
+    state === "open" ? library.busy : state === "resume" || state === "listen" ? locked || !book : playBlocked;
   return {
     primary: { state, label: PRIMARY_LABELS[state], disabled },
     secondaryHidden: state !== "resume",
     secondaryDisabled: generateDisabled,
     savedHidden: state !== "resume",
-    voiceSelectDisabled: locked,
+    voiceSelectDisabled: voices.busy || library.busy,
     forgetHidden: !library.remembered,
-    forgetDisabled: locked || library.busy || playback.navigating || !paused,
+    // Forget cancels a running generation first, so playing and paused do not block it.
+    forgetDisabled: voices.busy || library.busy || playback.navigating,
     fileInputDisabled: library.busy,
     prevDisabled: voices.busy || library.busy || playback.navigating || !playback.hasPrev,
     nextDisabled: voices.busy || library.busy || playback.navigating || !playback.hasNext,
-    voiceDownloadDisabled: locked || voices.stored !== false,
-    voiceRemoveDisabled: locked || voices.stored !== true,
-    voiceStatusText: voiceStatusText(voices, settings.voiceId),
+    voiceAction: voices.stored
+      ? { kind: "remove", label: "Remove voice", disabled: voiceActionLocked || inUse || playback.navigating }
+      : {
+          kind: "download",
+          label: "Download voice",
+          disabled: voiceActionLocked || inUse || playback.navigating || voices.stored === undefined,
+        },
+    voiceStatusText: voiceStatusText(voices),
+    voiceOptions: voiceOptions(voices.storedIds),
+    busy: locked || playback.navigating,
     savedText: savedText(saved, now),
     voiceValue: settings.voiceId,
     speedLabel: `${settings.speed.toFixed(2)}x`,

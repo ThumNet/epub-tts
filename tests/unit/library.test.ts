@@ -57,12 +57,11 @@ function fakeBook(id = "b1", chapterCount = 3): OpenBook {
 
 const INFO = "My Book (language: en, 3 spine items)";
 
-function setup(overrides: { generating?: boolean; navigating?: boolean; paused?: boolean; voicesBusy?: boolean } = {}) {
+function setup(overrides: { generating?: boolean; navigating?: boolean; voicesBusy?: boolean } = {}) {
   const events: string[] = [];
   const state = {
     generating: overrides.generating ?? false,
     navigating: overrides.navigating ?? false,
-    paused: overrides.paused ?? true,
     voicesBusy: overrides.voicesBusy ?? false,
     activeGeneration: Promise.resolve(),
   };
@@ -99,7 +98,6 @@ function setup(overrides: { generating?: boolean; navigating?: boolean; paused?:
     activeGeneration: () => state.activeGeneration,
     unloadChapter,
     isNavigating: () => state.navigating,
-    isPaused: () => state.paused,
     voicesBusy: () => state.voicesBusy,
     previewChapter,
   });
@@ -439,14 +437,29 @@ describe("forget", () => {
   });
 
   it.each([
-    ["generating", { generating: true }],
     ["navigating", { navigating: true }],
-    ["playing", { paused: false }],
     ["voices busy", { voicesBusy: true }],
   ])("is blocked while %s", async (_name, overrides) => {
     const t = await rememberedLibrary(overrides);
     t.library.forget();
     expect(mocks.forgetBook).not.toHaveBeenCalled();
+    expect(t.library.busy).toBe(false);
+  });
+
+  it("cancels a running generation first, so Forget works while playing or paused", async () => {
+    const t = await rememberedLibrary();
+    t.state.generating = true;
+    t.cancelGeneration.mockImplementation(() => {
+      t.state.generating = false;
+      return t.events.push("cancelGeneration");
+    });
+    mocks.forgetBook.mockResolvedValue(true);
+    t.library.forget();
+    expect(t.library.busy).toBe(true);
+    await flush();
+    expect(t.events.slice(0, 3)).toEqual(["notify", "cancelGeneration", "unloadChapter"]);
+    expect(mocks.forgetBook).toHaveBeenCalledTimes(1);
+    expect(t.library.remembered).toBe(false);
     expect(t.library.busy).toBe(false);
   });
 

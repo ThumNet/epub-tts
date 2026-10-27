@@ -7,7 +7,10 @@ import { errorName } from "./pure";
 export interface VoicesStoreDeps {
   hooks: Pick<EngineHooks, "notifyChange">;
   getVoiceId: () => string;
-  isGenerating: () => boolean;
+  isVoiceInUse: (id: string) => boolean;
+  isLibraryBusy: () => boolean;
+  /** True while a chapter change or a changed-voice restart cancels and restarts the generation. */
+  isTransitioning: () => boolean;
   persistSettings: () => void;
 }
 
@@ -16,6 +19,8 @@ export interface VoicesStore {
   readonly busy: boolean;
   /** Whether the selected voice is in the browser storage. Undefined when unknown. */
   readonly stored: boolean | undefined;
+  /** Every voice id in the browser storage. Undefined when unknown. */
+  readonly storedIds: readonly string[] | undefined;
   readonly message: string;
   /** Text of the last failed voice action. Cleared when a new voice action starts or the voice changes. */
   readonly error: string;
@@ -27,9 +32,9 @@ export interface VoicesStore {
 }
 
 export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
-  const { hooks, getVoiceId, isGenerating, persistSettings } = deps;
+  const { hooks, getVoiceId, isVoiceInUse, isLibraryBusy, isTransitioning, persistSettings } = deps;
   let voiceBusy = false;
-  let voiceStored: boolean | undefined;
+  let storedList: readonly string[] | undefined;
   let voiceMessage = "";
   let voiceError = "";
   let voiceStatusToken = 0;
@@ -45,10 +50,9 @@ export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
 
   async function refreshVoiceStatus(): Promise<void> {
     const token = ++voiceStatusToken;
-    const id = getVoiceId();
     const list = await readStoredVoices();
     if (token !== voiceStatusToken) return;
-    voiceStored = list ? list.includes(id) : undefined;
+    storedList = list;
     hooks.notifyChange();
   }
 
@@ -68,7 +72,10 @@ export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
       return voiceBusy;
     },
     get stored(): boolean | undefined {
-      return voiceStored;
+      return storedList?.includes(getVoiceId());
+    },
+    get storedIds(): readonly string[] | undefined {
+      return storedList;
     },
     get message(): string {
       return voiceMessage;
@@ -81,13 +88,22 @@ export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
       const id = getVoiceId();
       persistSettings();
       log(`voice selected: ${id}. The worker switches before the next generation.`);
-      voiceStored = undefined;
       voiceError = "";
       hooks.notifyChange();
       void refreshVoiceStatus();
     },
     startDownload(): void {
-      if (isGenerating() || voiceBusy) return;
+      // The same conditions as the disabled Download button. A transition starts a worker init without a recheck,
+      // and the worker must not read the voice files that this download writes.
+      if (
+        voiceBusy ||
+        storedList === undefined ||
+        isVoiceInUse(getVoiceId()) ||
+        isLibraryBusy() ||
+        isTransitioning()
+      ) {
+        return;
+      }
       const id = getVoiceId();
       voiceBusy = true;
       voiceError = "";
@@ -113,7 +129,15 @@ export function createVoicesStore(deps: VoicesStoreDeps): VoicesStore {
       })();
     },
     startRemove(): void {
-      if (isGenerating() || voiceBusy) return;
+      if (
+        voiceBusy ||
+        storedList === undefined ||
+        isVoiceInUse(getVoiceId()) ||
+        isLibraryBusy() ||
+        isTransitioning()
+      ) {
+        return;
+      }
       const id = getVoiceId();
       voiceBusy = true;
       voiceError = "";

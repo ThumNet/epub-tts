@@ -242,20 +242,29 @@ describe("clampSpeed and roundSpeed", () => {
 });
 
 describe("stepSpeed", () => {
-  it("moves by 0.25 in both directions", () => {
-    expect(stepSpeed(1, 1)).toBe(1.25);
-    expect(stepSpeed(1, -1)).toBe(0.75);
+  it("moves by 0.05 in both directions", () => {
+    expect(stepSpeed(1, 1)).toBe(1.05);
+    expect(stepSpeed(1, -1)).toBe(0.95);
   });
 
   it("clamps at both limits", () => {
     expect(stepSpeed(2, 1)).toBe(2);
     expect(stepSpeed(0.75, -1)).toBe(0.75);
-    expect(stepSpeed(1.9, 1)).toBe(2);
+    expect(stepSpeed(1.98, 1)).toBe(2);
+    expect(stepSpeed(0.78, -1)).toBe(0.75);
   });
 
   it("steps from an off-grid saved speed without snapping", () => {
-    expect(stepSpeed(1.35, 1)).toBe(1.6);
-    expect(stepSpeed(1.35, -1)).toBe(1.1);
+    expect(stepSpeed(1.37, 1)).toBe(1.42);
+    expect(stepSpeed(1.37, -1)).toBe(1.32);
+  });
+
+  it("does not drift over repeated presses", () => {
+    let speed = 1;
+    for (let press = 0; press < 20; press += 1) speed = stepSpeed(speed, 1);
+    expect(speed).toBe(2);
+    for (let press = 0; press < 25; press += 1) speed = stepSpeed(speed, -1);
+    expect(speed).toBe(0.75);
   });
 });
 
