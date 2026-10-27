@@ -1,7 +1,7 @@
 import type { ChapterInfo, Sentence } from "../epub";
 import { log, logText } from "../log";
 import { loadPosition } from "../store";
-import { DEFAULT_VOICE_ID, VOICES } from "../voices";
+import { DEFAULT_VOICE_ID } from "../voices";
 import { SAVE_INTERVAL_MS } from "../engine/config";
 import { stepSpeed } from "../engine/pure";
 import { chapterSelectState, createUiState, filledChapterSelectState } from "./state";
@@ -118,7 +118,15 @@ export function createShell(): Shell {
     savedElement.textContent = deriveView(snapshot()).savedText;
   }
 
+  let renderedVoiceOptions = "";
+
   function drawSettings(view: ControlsView): void {
+    // Rebuild the options only when a text changes, to keep an open picker.
+    const optionsKey = JSON.stringify(view.voiceOptions);
+    if (optionsKey !== renderedVoiceOptions) {
+      voiceSelect.replaceChildren(...view.voiceOptions.map((option) => new Option(option.text, option.id)));
+      renderedVoiceOptions = optionsKey;
+    }
     voiceSelect.value = view.voiceValue;
     speedLabel.textContent = view.speedLabel;
     speedDownButton.disabled = view.speedDownDisabled;
@@ -143,6 +151,7 @@ export function createShell(): Shell {
     voiceActionButton.title = view.voiceAction.label;
     voiceActionButton.setAttribute("aria-label", view.voiceAction.label);
     voiceStatus.textContent = view.voiceStatusText;
+    voiceStatus.hidden = view.voiceStatusText === "";
     activityElement.dataset["busy"] = String(view.busy);
     activityElement.setAttribute("aria-hidden", String(!view.busy));
     // While the app works the bar shows it. The status text returns when the work ends, so errors stay readable.
@@ -244,7 +253,13 @@ export function createShell(): Shell {
     const opened = bookStore.opened;
     return {
       playback: playback.view(),
-      voices: { busy: voices.busy, stored: voices.stored, message: voices.message, error: voices.error },
+      voices: {
+        busy: voices.busy,
+        stored: voices.stored,
+        storedIds: voices.storedIds,
+        message: voices.message,
+        error: voices.error,
+      },
       library: { busy: library.busy, remembered: library.remembered },
       book: opened ? { id: opened.id, title: opened.title } : undefined,
       settings: { voiceId: settings.voiceId, speed: settings.speed },
@@ -394,7 +409,6 @@ export function createShell(): Shell {
 
   function initSettings(): void {
     const { settings, playback, voices } = engine();
-    voiceSelect.replaceChildren(...VOICES.map((voice) => new Option(voice.label, voice.id)));
     const { voiceId, rejectedVoice } = settings.load();
     if (rejectedVoice !== undefined) {
       log(`saved voice ${rejectedVoice} is not in the voice list. Using ${DEFAULT_VOICE_ID}.`);

@@ -89,12 +89,15 @@ export interface PlaybackDeps {
 /** Live values of the flags the controls read. A plain object created at call time. */
 export interface PlaybackView {
   generating: boolean;
+  /** True while a chapter change or a jump (also a changed-voice restart) cancels and restarts the generation. */
   navigating: boolean;
   /** The user's intent to hear audio. It stays true across the pause between two segments. */
   wantPlaying: boolean;
   navigationBase: number;
   hasPrev: boolean;
   hasNext: boolean;
+  /** Voice ids that the loaded chapter, the running generation or a running regeneration uses. Empty when idle. */
+  voicesInUse: readonly string[];
 }
 
 export interface Playback {
@@ -155,6 +158,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
   let buffering = false;
   // True while the user wants sound: set by play, cleared by a user or media-session pause.
   let wantPlaying = false;
+  const VOICE_BUSY_STATUS = "Wait for the voice download to finish.";
 
   /** Assigning audio.src resets playbackRate to defaultPlaybackRate, so set both. */
   function applyPlaybackRate(): void {
@@ -318,14 +322,26 @@ export function createPlayback(deps: PlaybackDeps): Playback {
     }, STUCK_CHECK_MS);
   }
 
-  function playFromMediaSession(): void {
-    // The voice changed while paused: the loaded audio and the running generation still use the old voice.
-    if (loaded && loaded.voiceId !== getVoiceId() && !navigating && !isVoicesBusy()) {
-      log(`resume with a changed voice: restarting at the current sentence with ${getVoiceId()}`);
-      wantPlaying = true;
-      void jumpToSentence(Math.max(currentSentence, 0));
-      return;
+  /**
+   * The voice changed while paused: the loaded audio and the running generation still use the old voice.
+   * Restart at `index` with the new voice. Returns true when it handled the request. While a voice download or
+   * removal runs it only says so and changes nothing: the worker must not read the voice files that the download writes.
+   */
+  function restartForChangedVoice(index: number, action: string, where: string): boolean {
+    if (!loaded || loaded.voiceId === getVoiceId() || navigating) return false;
+    if (isVoicesBusy()) {
+      log(`${action} ignored: a voice download or removal is running`);
+      hooks.setStatus(VOICE_BUSY_STATUS);
+      return true;
     }
+    log(`${action} with a changed voice: restarting at ${where} with ${getVoiceId()}`);
+    wantPlaying = true;
+    void jumpToSentence(index);
+    return true;
+  }
+
+  function playFromMediaSession(): void {
+    if (restartForChangedVoice(Math.max(currentSentence, 0), "resume", "the current sentence")) return;
     wantPlaying = true;
     // While buffering, audio is already paused, so no `play` event follows. Redraw for the new intent.
     hooks.notifyChange();
@@ -433,6 +449,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       startFromPreview(index);
       return;
     }
+    if (restartForChangedVoice(index, "play from here", `sentence ${index + 1}`)) return;
     const segmentIndex = segmentForSentence(loaded.segments, index);
     const segment = loaded.segments[segmentIndex];
     if (!segment) {
@@ -638,6 +655,16 @@ export function createPlayback(deps: PlaybackDeps): Playback {
   }
 
   const regenerations = new WeakMap<Segment, Promise<boolean>>();
+  // Voices of the regenerations in flight, with a count. A regeneration may still read a voice that no chapter or
+  // generation uses any more, so `view().voicesInUse` includes these.
+  const regeneratingVoices = new Map<string, number>();
+
+  function markRegenerating(voiceId: string, change: 1 | -1): void {
+    const count = (regeneratingVoices.get(voiceId) ?? 0) + change;
+    if (count > 0) regeneratingVoices.set(voiceId, count);
+    else regeneratingVoices.delete(voiceId);
+    hooks.notifyChange();
+  }
 
   // Bumped by the Cancel button. A regeneration started before the bump stops queueing sentences.
   let cancelEpoch = 0;
@@ -679,6 +706,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
       log(`segment ${segmentIndex + 1} regenerating`);
       hooks.setStatus("Preparing the audio again...");
       const startedAt = performance.now();
+      markRegenerating(active.voiceId, 1);
       try {
         await workerClient.ensure(active.voiceId);
         const clips: Clip[] = [];
@@ -715,6 +743,7 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         return false;
       } finally {
         regenerations.delete(segment);
+        markRegenerating(active.voiceId, -1);
       }
     })();
     regenerations.set(segment, task);
@@ -1196,6 +1225,13 @@ export function createPlayback(deps: PlaybackDeps): Playback {
         navigationBase: base,
         hasPrev: hasTextChapter(base, -1),
         hasNext: hasTextChapter(base, 1),
+        voicesInUse: [
+          ...new Set([
+            ...(loaded ? [loaded.voiceId] : []),
+            ...(generating ? [generationVoiceId] : []),
+            ...regeneratingVoices.keys(),
+          ]),
+        ],
       };
     },
     registerPlayPauseListeners,

@@ -1,4 +1,5 @@
 import { BOOK_TITLE, sentenceText } from "./epub-fixture";
+import type { Page } from "@playwright/test";
 import {
   audioPaused,
   audioRate,
@@ -22,6 +23,15 @@ import {
  * Skips: none. Headless Chromium and Firefox both play the mock worker's wav files.
  * The page is cross-origin isolated by the e2e preview server headers, so coi-serviceworker never runs.
  */
+
+/** The library lists a voice as stored when `piper/<id>.onnx` exists in the browser file storage. */
+async function seedStoredVoices(page: Page, ids: string[]): Promise<void> {
+  await page.evaluate(async (list) => {
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle("piper", { create: true });
+    for (const id of list) await dir.getFileHandle(`${id}.onnx`, { create: true });
+  }, ids);
+}
 
 test("startup: quiet page, version footer, five voices, Kristin by default", async ({ page }) => {
   await openApp(page);
@@ -359,6 +369,29 @@ test("voice: a voice picked while paused is used when playback resumes", async (
   await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
 });
 
+test("voice: Play from here after a paused voice change restarts with the new voice", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  await generateChapter(page, 1);
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice")).toBeEnabled();
+  const current = await page.locator("#voice").inputValue();
+  const other = await page
+    .locator("#voice option")
+    .evaluateAll((list, now) => list.map((o) => (o instanceof HTMLOptionElement ? o.value : "")).find((value) => value !== now), current);
+  if (!other) throw new Error("no other voice");
+  await page.locator("#voice").selectOption(other);
+  await expect(log(page)).toContainText(`voice selected: ${other}`);
+  await closeSheet(page, "voice");
+  await page.locator('#text span[data-index="1"]').click();
+  await page.locator("#text .play-here").click();
+  await expect(log(page)).toContainText(`play from here with a changed voice: restarting at sentence 2 with ${other}`);
+  await expect(log(page)).toContainText(`model ${other} ready`, { timeout: 30_000 });
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
+});
+
 test("voice: one icon button next to the select is Download or Remove, never both", async ({ page }) => {
   await openApp(page);
   await openSheet(page, "voice");
@@ -368,6 +401,64 @@ test("voice: one icon button next to the select is Download or Remove, never bot
   await expect(action).toHaveAttribute("data-action", /^(download|remove)$/);
   await expect(action).toHaveAccessibleName(/^(Download|Remove) voice$/);
   await expect(action.locator("svg:visible")).toHaveCount(1);
+});
+
+test("voice: the status line is hidden and the options carry the size hint only for voices that are not downloaded", async ({ page }) => {
+  await openApp(page);
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice-status")).toBeHidden();
+  await expect(page.locator('#voice option[value="en_US-kristin-medium"]')).toHaveText("Kristin (US, female) - 61 MB, not downloaded");
+  await seedStoredVoices(page, ["en_US-kristin-medium", "en_US-john-medium"]);
+  await page.reload();
+  await openSheet(page, "voice");
+  await expect(page.locator('#voice option[value="en_US-kristin-medium"]')).toHaveText("Kristin (US, female)");
+  await expect(page.locator('#voice option[value="en_US-john-medium"]')).toHaveText("John (US, male)");
+  await expect(page.locator('#voice option[value="en_US-norman-medium"]')).toHaveText("Norman (US, male) - 61 MB, not downloaded");
+  await expect(page.locator("#voice-status")).toBeHidden();
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "remove");
+});
+
+test("voice: Download is disabled for the voice in use and enabled for another voice while paused", async ({ page }) => {
+  await openApp(page);
+  await pickBook(page);
+  await generateChapter(page, 1);
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "download");
+  await expect(page.locator("#voice-action")).toBeDisabled();
+  await closeSheet(page, "voice");
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice-action")).toBeDisabled();
+  await page.locator("#voice").selectOption("en_US-norman-medium");
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "download");
+  await expect(page.locator("#voice-action")).toBeEnabled();
+});
+
+test("voice: Remove is disabled for the voice in use and enabled for another stored voice while paused", async ({ page }) => {
+  await openApp(page);
+  await seedStoredVoices(page, ["en_US-kristin-medium", "en_US-john-medium"]);
+  await page.reload();
+  await pickBook(page);
+  await generateChapter(page, 1);
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "pause");
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "remove");
+  await expect(page.locator("#voice-action")).toBeDisabled();
+  await closeSheet(page, "voice");
+  await page.locator("#primary").click();
+  await expect(page.locator("#primary")).toHaveAttribute("data-state", "play");
+  await openSheet(page, "voice");
+  await expect(page.locator("#voice-action")).toBeDisabled();
+  await page.locator("#voice").selectOption("en_US-john-medium");
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "remove");
+  await expect(page.locator("#voice-action")).toBeEnabled();
+  await page.locator("#voice").selectOption("en_US-norman-medium");
+  await expect(page.locator("#voice-action")).toHaveAttribute("data-action", "download");
+  await expect(page.locator("#voice-action")).toBeEnabled();
+  await page.locator("#voice").selectOption("en_US-kristin-medium");
+  await expect(page.locator("#voice-action")).toBeDisabled();
 });
 
 test("forget: deletes the book while the chapter is playing", async ({ page }) => {

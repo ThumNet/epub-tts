@@ -20,14 +20,16 @@ import { createVoicesStore } from "../../src/engine/voices-store";
 
 const ID = "voice-a";
 
-function setup(generating = false) {
+function setup(inUse = false) {
   const notifyChange = vi.fn<() => void>();
   const persistSettings = vi.fn<() => void>();
-  const state = { generating };
+  const state = { inUse, libraryBusy: false, transitioning: false };
   const store = createVoicesStore({
     hooks: { notifyChange },
     getVoiceId: () => ID,
-    isGenerating: () => state.generating,
+    isVoiceInUse: (id) => state.inUse && id === ID,
+    isLibraryBusy: () => state.libraryBusy,
+    isTransitioning: () => state.transitioning,
     persistSettings,
   });
   return { store, notifyChange, persistSettings, state };
@@ -100,16 +102,17 @@ describe("refresh", () => {
 });
 
 describe("select", () => {
-  it("persists, logs, resets the state and refreshes", async () => {
-    library.stored.mockResolvedValue([ID]);
+  it("persists, logs and refreshes, and keeps the known stored list", async () => {
+    library.stored.mockResolvedValue([ID, "voice-b"]);
     const { store, persistSettings, notifyChange } = setup();
     await store.refresh();
     expect(store.stored).toBe(true);
+    expect(store.storedIds).toEqual([ID, "voice-b"]);
     notifyChange.mockClear();
     store.select();
     expect(persistSettings).toHaveBeenCalledTimes(1);
     expect(logged()).toContain(`voice selected: ${ID}. The worker switches before the next generation.`);
-    expect(store.stored).toBeUndefined();
+    expect(store.stored).toBe(true);
     expect(store.error).toBe("");
     expect(notifyChange).toHaveBeenCalledTimes(1);
     await flush();
@@ -119,6 +122,15 @@ describe("select", () => {
 });
 
 describe("startDownload", () => {
+  /** The storage status is known (not stored), as in the UI whenever the Download button shows. */
+  async function readySetup(inUse = false) {
+    library.stored.mockResolvedValue([]);
+    const t = setup(inUse);
+    await t.store.refresh();
+    t.notifyChange.mockClear();
+    return t;
+  }
+
   it("sets busy, reports progress, then clears busy and refreshes", async () => {
     let progress: (p: { loaded: number; total: number }) => void = () => undefined;
     let finish: () => void = () => undefined;
@@ -128,8 +140,8 @@ describe("startDownload", () => {
         finish = resolve;
       });
     });
+    const { store, notifyChange } = await readySetup();
     library.stored.mockResolvedValue([ID]);
-    const { store, notifyChange } = setup();
     store.startDownload();
     expect(store.busy).toBe(true);
     expect(store.message).toBe("Downloading 0%");
@@ -153,8 +165,7 @@ describe("startDownload", () => {
 
   it("logs when the voice is never found in storage", async () => {
     library.download.mockResolvedValue(undefined);
-    library.stored.mockResolvedValue([]);
-    const { store } = setup();
+    const { store } = await readySetup();
     store.startDownload();
     await vi.advanceTimersByTimeAsync(10 * 500);
     expect(logged()).toContain(`voice download finished but ${ID} was not found in storage`);
@@ -164,23 +175,61 @@ describe("startDownload", () => {
 
   it("logs a failure and still clears busy", async () => {
     library.download.mockRejectedValue(new Error("offline"));
-    library.stored.mockResolvedValue([]);
-    const { store } = setup();
+    const { store } = await readySetup();
     store.startDownload();
     await flush();
     expect(logged()).toContain("voice download failed: Error: offline");
     expect(store.busy).toBe(false);
   });
 
-  it("does nothing while generating or busy", async () => {
-    library.download.mockReturnValue(new Promise<void>(() => undefined));
-    const generating = setup(true);
-    generating.store.startDownload();
-    expect(generating.store.busy).toBe(false);
+  it("does nothing while the voice is in use, and downloads once it is not", async () => {
+    library.download.mockResolvedValue(undefined);
+    const { store, notifyChange, state } = await readySetup(true);
+    store.startDownload();
+    expect(store.busy).toBe(false);
     expect(library.download).not.toHaveBeenCalled();
-    expect(generating.notifyChange).not.toHaveBeenCalled();
+    expect(notifyChange).not.toHaveBeenCalled();
+    state.inUse = false;
+    store.startDownload();
+    expect(store.busy).toBe(true);
+    expect(library.download).toHaveBeenCalledTimes(1);
+    await flush();
+  });
 
-    const idle = setup();
+  it.each([
+    ["the library is busy", (state: { libraryBusy: boolean; transitioning: boolean }) => (state.libraryBusy = true)],
+    ["a chapter change or voice restart is in flight", (state: { libraryBusy: boolean; transitioning: boolean }) => (state.transitioning = true)],
+  ])("does nothing while %s, and downloads once it ends", async (_name, block) => {
+    library.download.mockResolvedValue(undefined);
+    const { store, notifyChange, state } = await readySetup();
+    block(state);
+    store.startDownload();
+    expect(store.busy).toBe(false);
+    expect(library.download).not.toHaveBeenCalled();
+    expect(notifyChange).not.toHaveBeenCalled();
+    state.libraryBusy = false;
+    state.transitioning = false;
+    store.startDownload();
+    expect(library.download).toHaveBeenCalledTimes(1);
+    await flush();
+  });
+
+  it("does nothing while the storage status is unknown", async () => {
+    library.download.mockResolvedValue(undefined);
+    library.stored.mockRejectedValue(new Error("no storage"));
+    const { store, notifyChange } = setup();
+    await store.refresh();
+    notifyChange.mockClear();
+    expect(store.stored).toBeUndefined();
+    store.startDownload();
+    expect(store.busy).toBe(false);
+    expect(library.download).not.toHaveBeenCalled();
+    expect(notifyChange).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while busy", async () => {
+    library.download.mockReturnValue(new Promise<void>(() => undefined));
+    const idle = await readySetup();
     idle.store.startDownload();
     idle.store.startDownload();
     idle.store.startRemove();
@@ -192,10 +241,19 @@ describe("startDownload", () => {
 });
 
 describe("startRemove", () => {
+  /** The storage status is known (stored), as in the UI whenever the Remove button shows. */
+  async function readySetup(inUse = false) {
+    library.stored.mockResolvedValue([ID]);
+    const t = setup(inUse);
+    await t.store.refresh();
+    t.notifyChange.mockClear();
+    return t;
+  }
+
   it("removes through the library and finishes", async () => {
     library.remove.mockResolvedValue(undefined);
+    const { store, notifyChange } = await readySetup();
     library.stored.mockResolvedValue([]);
-    const { store, notifyChange } = setup();
     store.startRemove();
     expect(store.busy).toBe(true);
     expect(store.message).toBe("Removing...");
@@ -212,8 +270,8 @@ describe("startRemove", () => {
   it("deletes the files directly when the library leaves the voice in storage", async () => {
     library.remove.mockResolvedValue(undefined);
     library.removeVoiceFiles.mockResolvedValue(undefined);
+    const { store } = await readySetup();
     library.stored.mockResolvedValueOnce([ID]).mockResolvedValue([]);
-    const { store } = setup();
     store.startRemove();
     await flush();
     expect(logged()).toContain(`library remove left ${ID} in storage: deleting the files directly`);
@@ -225,8 +283,7 @@ describe("startRemove", () => {
   it("sets the error when the voice is still stored after deletion", async () => {
     library.remove.mockResolvedValue(undefined);
     library.removeVoiceFiles.mockResolvedValue(undefined);
-    library.stored.mockResolvedValue([ID]);
-    const { store } = setup();
+    const { store } = await readySetup();
     store.startRemove();
     await flush();
     const message = "Could not remove the voice: Error: the files are still in storage after deletion";
@@ -236,8 +293,38 @@ describe("startRemove", () => {
     expect(store.stored).toBe(true);
   });
 
-  it("does nothing while generating", () => {
-    const { store, notifyChange } = setup(true);
+  it("does nothing while the voice is in use", async () => {
+    const { store, notifyChange } = await readySetup(true);
+    store.startRemove();
+    expect(store.busy).toBe(false);
+    expect(library.remove).not.toHaveBeenCalled();
+    expect(notifyChange).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the library is busy", (state: { libraryBusy: boolean; transitioning: boolean }) => (state.libraryBusy = true)],
+    ["a chapter change or voice restart is in flight", (state: { libraryBusy: boolean; transitioning: boolean }) => (state.transitioning = true)],
+  ])("does nothing while %s, and removes once it ends", async (_name, block) => {
+    library.remove.mockResolvedValue(undefined);
+    const { store, notifyChange, state } = await readySetup();
+    block(state);
+    store.startRemove();
+    expect(store.busy).toBe(false);
+    expect(library.remove).not.toHaveBeenCalled();
+    expect(notifyChange).not.toHaveBeenCalled();
+    state.libraryBusy = false;
+    state.transitioning = false;
+    library.stored.mockResolvedValue([]);
+    store.startRemove();
+    expect(library.remove).toHaveBeenCalledTimes(1);
+    await flush();
+  });
+
+  it("does nothing while the storage status is unknown", async () => {
+    library.stored.mockRejectedValue(new Error("no storage"));
+    const { store, notifyChange } = setup();
+    await store.refresh();
+    notifyChange.mockClear();
     store.startRemove();
     expect(store.busy).toBe(false);
     expect(library.remove).not.toHaveBeenCalled();
