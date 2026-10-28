@@ -25,7 +25,7 @@ Observation from the owner's phone tests (not verified in source):
 
 - After a pause of about 3 to 6 seconds in the background, lock-screen resume stops until the app is in the foreground.
 - Source: the owner's own log on one iPhone (iOS 18.7), in a Safari tab and in the home-screen app. We did not verify it on other devices or iOS versions.
-- See "Known limitations / maintenance notes" in `README.md`.
+- See "Known limitations / maintenance notes" in `docs/limitations.md`.
 - Ideas not done for that limit: a silent keep-alive audio, and a native wrapper.
 
 Open: the phone test results are not recorded here. The "Tests to run on phone" checklist still applies.
